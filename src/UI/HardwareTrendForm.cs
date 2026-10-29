@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Windows.Forms;
 using LiteMonitor.src.Core;
+using LiteMonitor.src.UI.Controls;
 
 namespace LiteMonitor
 {
@@ -29,14 +30,15 @@ namespace LiteMonitor
         private bool _fillingGrid;
         private float _scale = 1.0f;
 
-        private readonly Color C_Back = Color.FromArgb(32, 32, 32);
-        private readonly Color C_Panel = Color.FromArgb(45, 45, 45);
-        private readonly Color C_GridBack = Color.FromArgb(38, 38, 38);
-        private readonly Color C_GridLine = Color.FromArgb(60, 60, 60);
-        private readonly Color C_TextMain = Color.FromArgb(230, 230, 230);
-        private readonly Color C_TextDim = Color.FromArgb(160, 160, 160);
-        private readonly Color C_Header = Color.FromArgb(50, 50, 50);
-        private readonly Color C_Accent = Color.FromArgb(0, 122, 204);
+        // 跟随「界面模式」的 Graphite 色板（窗口打开时取值）
+        private readonly Color C_Back = UIColors.MainBg;
+        private readonly Color C_Panel = UIColors.CardBg;
+        private readonly Color C_GridBack = UIColors.CardBg;
+        private readonly Color C_GridLine = UIColors.Divider;
+        private readonly Color C_TextMain = UIColors.TextMain;
+        private readonly Color C_TextDim = UIColors.TextSub;
+        private readonly Color C_Header = UIColors.GroupHeader;
+        private readonly Color C_Accent = UIColors.Primary;
 
         protected override CreateParams CreateParams
         {
@@ -63,6 +65,7 @@ namespace LiteMonitor
         public HardwareTrendForm(Settings cfg)
         {
             _cfg = cfg;
+            UIColors.ApplyTitleBar(this);
             DoubleBuffered = true;
 
             using (Graphics g = CreateGraphics())
@@ -189,14 +192,14 @@ namespace LiteMonitor
             };
 
             grid.ColumnHeadersDefaultCellStyle.BackColor = C_Header;
-            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.Gainsboro;
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = C_TextDim;
             grid.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", 9, FontStyle.Regular);
             grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
             grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
             grid.DefaultCellStyle.BackColor = C_GridBack;
             grid.DefaultCellStyle.ForeColor = C_TextMain;
-            grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(70, 70, 70);
-            grid.DefaultCellStyle.SelectionForeColor = Color.White;
+            grid.DefaultCellStyle.SelectionBackColor = UIColors.NavSelected;
+            grid.DefaultCellStyle.SelectionForeColor = C_TextMain;
             grid.DefaultCellStyle.Font = new Font("Consolas", 10);
             grid.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
             grid.RowTemplate.Height = S(32);
@@ -539,14 +542,14 @@ namespace LiteMonitor
             {
                 bool active = kv.Key == _category;
                 kv.Value.BackColor = active ? C_Accent : C_Back;
-                kv.Value.ForeColor = active ? Color.White : C_TextDim;
+                kv.Value.ForeColor = active ? UIColors.OnPrimary : C_TextDim;
             }
 
             foreach (var kv in _rangeButtons)
             {
                 bool active = kv.Key == _range;
                 kv.Value.BackColor = active ? C_Accent : C_Back;
-                kv.Value.ForeColor = active ? Color.White : C_TextDim;
+                kv.Value.ForeColor = active ? UIColors.OnPrimary : C_TextDim;
             }
         }
 
@@ -639,14 +642,11 @@ namespace LiteMonitor
 
         private Color GetSeriesColor(int index)
         {
-            Color[] colors =
-            {
-                Color.FromArgb(80, 160, 255),
-                Color.FromArgb(80, 220, 120),
-                Color.FromArgb(245, 196, 80),
-                Color.FromArgb(230, 95, 95),
-                Color.FromArgb(180, 140, 255)
-            };
+            // 深浅两套曲线色，彼此在明度上也拉开，便于区分
+            string[] hex = UIColors.IsDark
+                ? new[] { "#6CB6FF", "#F59E5B", "#4FD1C5", "#F472B6", "#C4A1FF" }
+                : new[] { "#1F6FD1", "#D9711F", "#0E9488", "#D23C8A", "#7C5CD6" };
+            Color[] colors = hex.Select(ColorTranslator.FromHtml).ToArray();
             return colors[index % colors.Length];
         }
 

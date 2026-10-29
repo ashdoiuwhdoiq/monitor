@@ -28,11 +28,12 @@ namespace LiteMonitor
 
     public class TrendChartControl : Control
     {
-        private readonly Color _gridColor = Color.FromArgb(58, 58, 58);
-        private readonly Color _axisColor = Color.FromArgb(95, 95, 95);
-        private readonly Color _textColor = Color.FromArgb(220, 220, 220);
-        private readonly Color _dimTextColor = Color.FromArgb(145, 145, 145);
-        private readonly Color _tooltipBack = Color.FromArgb(235, 38, 38, 38);
+        // 跟随「界面模式」的 Graphite 色板（控件创建时取值）
+        private readonly Color _gridColor = src.UI.Controls.UIColors.Divider;
+        private readonly Color _axisColor = src.UI.Controls.UIColors.LineSoft;
+        private readonly Color _textColor = src.UI.Controls.UIColors.TextMain;
+        private readonly Color _dimTextColor = src.UI.Controls.UIColors.TextSub;
+        private readonly Color _tooltipBack = Color.FromArgb(242, src.UI.Controls.UIColors.CardBg);
         private readonly List<TrendChartSeries> _series = new List<TrendChartSeries>();
         private readonly HashSet<string> _hiddenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly List<LegendHit> _legendHits = new List<LegendHit>();
@@ -49,7 +50,7 @@ namespace LiteMonitor
         public TrendChartControl()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            BackColor = Color.FromArgb(38, 38, 38);
+            BackColor = src.UI.Controls.UIColors.CardBg;
             ForeColor = _textColor;
             Font = new Font("Microsoft YaHei UI", 9F);
         }
@@ -338,7 +339,7 @@ namespace LiteMonitor
             if (!Threshold.HasValue || Threshold.Value < minValue || Threshold.Value > maxValue) return;
 
             float y = ValueToY(Threshold.Value, plot, minValue, maxValue);
-            using var pen = new Pen(Color.FromArgb(210, 210, 75, 75), Math.Max(1f, SF(1))) { DashStyle = DashStyle.Dash };
+            using var pen = new Pen(Color.FromArgb(210, src.UI.Controls.UIColors.TextCrit),Math.Max(1f, SF(1))) { DashStyle = DashStyle.Dash };
             g.DrawLine(pen, plot.Left, y, plot.Right, y);
         }
 
@@ -381,7 +382,7 @@ namespace LiteMonitor
             if (!_hoverTime.HasValue) return;
 
             float x = TimeToX(_hoverTime.Value, plot, minTime, maxTime);
-            using var linePen = new Pen(Color.FromArgb(130, 220, 220, 220), 1);
+            using var linePen = new Pen(Color.FromArgb(130, _dimTextColor), 1);
             g.DrawLine(linePen, x, plot.Top, x, plot.Bottom);
 
             var rows = new List<string> { _hoverTime.Value.ToString("MM-dd HH:mm") };
@@ -401,7 +402,7 @@ namespace LiteMonitor
 
             using var path = RoundedRect(new RectangleF(left, top, width, height), S(5));
             using var bg = new SolidBrush(_tooltipBack);
-            using var border = new Pen(Color.FromArgb(95, 95, 95), 1);
+            using var border = new Pen(src.UI.Controls.UIColors.Border, 1);
             g.FillPath(bg, path);
             g.DrawPath(border, path);
 

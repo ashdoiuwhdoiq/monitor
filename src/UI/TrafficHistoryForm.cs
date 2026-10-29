@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Reflection; // 用于给 DataGridView 开缓冲
 using LiteMonitor.src.Core;
+using LiteMonitor.src.UI.Controls;
 
 namespace LiteMonitor
 {
@@ -45,24 +46,26 @@ namespace LiteMonitor
         }
 
         // === 配色 ===
-        private readonly Color C_Back = Color.FromArgb(32, 32, 32);
-        private readonly Color C_Panel = Color.FromArgb(45, 45, 45);
-        private readonly Color C_GridBack = Color.FromArgb(38, 38, 38);
-        private readonly Color C_GridLine = Color.FromArgb(60, 60, 60);
-        private readonly Color C_TextMain = Color.FromArgb(230, 230, 230);
-        private readonly Color C_TextDim = Color.FromArgb(160, 160, 160);
-        private readonly Color C_Header = Color.FromArgb(50, 50, 50);
-        private readonly Color C_Accent = Color.FromArgb(0, 122, 204);
+        // 跟随「界面模式」的 Graphite 色板（窗口打开时取值）：下载为强调蓝，上传为橙
+        private readonly Color C_Back = UIColors.MainBg;
+        private readonly Color C_Panel = UIColors.CardBg;
+        private readonly Color C_GridBack = UIColors.CardBg;
+        private readonly Color C_GridLine = UIColors.Divider;
+        private readonly Color C_TextMain = UIColors.TextMain;
+        private readonly Color C_TextDim = UIColors.TextSub;
+        private readonly Color C_Header = UIColors.GroupHeader;
+        private readonly Color C_Accent = UIColors.Primary;
 
-        private readonly Color C_Up = Color.FromArgb(80, 160, 255);
-        private readonly Color C_Down = Color.FromArgb(80, 220, 120);
-        private readonly Color C_BarBg = Color.FromArgb(60, 60, 60);
+        private readonly Color C_Up = UIColors.IsDark ? ColorTranslator.FromHtml("#F59E5B") : ColorTranslator.FromHtml("#DC7424");
+        private readonly Color C_Down = UIColors.Primary;
+        private readonly Color C_BarBg = UIColors.ChipBg;
 
-        private readonly Color C_Highlight = Color.FromArgb(255, 215, 0);
+        private readonly Color C_Highlight = UIColors.TextWarn;
 
         public TrafficHistoryForm(Settings cfg)
         {
             _cfg = cfg;
+            UIColors.ApplyTitleBar(this);
             // 【修改点 1】开启窗体自身的双缓冲（解决背景白屏）
             this.DoubleBuffered = true;
 
@@ -112,7 +115,7 @@ namespace LiteMonitor
                 AutoSize = false,
                 Size = new Size(1, S(80)),
                 Location = new Point(S(400), S(25)),
-                BackColor = Color.FromArgb(80, 80, 80),
+                BackColor = UIColors.Border,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left
             };
             pnlDash.Controls.Add(split);
@@ -174,15 +177,15 @@ namespace LiteMonitor
             };
 
             _grid.ColumnHeadersDefaultCellStyle.BackColor = C_Header;
-            _grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.Gainsboro;
+            _grid.ColumnHeadersDefaultCellStyle.ForeColor = C_TextDim;
             _grid.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", 10, FontStyle.Regular);
             _grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
             _grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
 
             _grid.DefaultCellStyle.BackColor = C_GridBack;
             _grid.DefaultCellStyle.ForeColor = C_TextMain;
-            _grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(70, 70, 70);
-            _grid.DefaultCellStyle.SelectionForeColor = Color.White;
+            _grid.DefaultCellStyle.SelectionBackColor = UIColors.NavSelected;
+            _grid.DefaultCellStyle.SelectionForeColor = C_TextMain;
             _grid.DefaultCellStyle.Font = new Font("Consolas", 11);
             _grid.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
             _grid.RowTemplate.Height = S(36);
@@ -303,7 +306,7 @@ namespace LiteMonitor
             {
                 bool active = kv.Key == mode;
                 kv.Value.BackColor = active ? C_Accent : C_Back;
-                kv.Value.ForeColor = active ? Color.White : C_TextDim;
+                kv.Value.ForeColor = active ? UIColors.OnPrimary : C_TextDim;
             }
             LoadGridData(mode);
         }
