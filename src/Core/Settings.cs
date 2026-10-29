@@ -25,6 +25,7 @@ namespace LiteMonitor
         public bool HorizontalMode { get; set; } = false;
         public double Opacity { get; set; } = 0.85;
         public string Language { get; set; } = "";
+        public string UIThemeMode { get; set; } = "system"; // 设置等应用窗口的明暗：dark / light / system
         public bool ClickThrough { get; set; } = false;
         public bool AutoHide { get; set; } = true;
         public bool ClampToScreen { get; set; } = true;

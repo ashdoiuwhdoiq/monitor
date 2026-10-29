@@ -134,6 +134,11 @@
 
     "Appearance": "Apparence",
     "Theme": "Thème",
+    "UIThemeMode": "Thème des fenêtres",
+    "UIModeDark": "Sombre",
+    "UIModeLight": "Clair",
+    "UIModeSystem": "Suivre le système",
+    "UIThemeModeHint": "S’applique aux Paramètres et autres fenêtres après réouverture",
     "DisplayMode": "Mode",
     "Vertical": "Panneau",
     "Horizontal": "Barre",

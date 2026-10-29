@@ -22,7 +22,7 @@ namespace LiteMonitor.src.UI.SettingsPage
         // ★★★ Refresh Mechanism for Deferred Load ★★★
         protected List<Action> _refreshActions = new List<Action>();
 
-        public static readonly Color GlobalBackColor = Color.FromArgb(249, 249, 249); 
+        public static Color GlobalBackColor => UIColors.MainBg;
 
         public SettingsPageBase() 
         {

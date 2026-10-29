@@ -133,6 +133,11 @@
 
     "Appearance": "外观设置",
     "Theme": "主题",
+    "UIThemeMode": "界面模式",
+    "UIModeDark": "深色",
+    "UIModeLight": "浅色",
+    "UIModeSystem": "跟随系统",
+    "UIThemeModeHint": "作用于设置等窗口，重新打开窗口后生效",
     "DisplayMode": "显示模式",
     "Vertical": "面板模式",
     "Horizontal": "横条模式",

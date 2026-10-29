@@ -133,6 +133,11 @@
 
     "Appearance": "테마 설정",
     "Theme": "테마",
+    "UIThemeMode": "창 테마",
+    "UIModeDark": "어둡게",
+    "UIModeLight": "밝게",
+    "UIModeSystem": "시스템 설정 사용",
+    "UIThemeModeHint": "설정 등의 창을 다시 열면 적용됩니다",
     "DisplayMode": "표시 모드",
     "Vertical": "패널형",
     "Horizontal": "바형",

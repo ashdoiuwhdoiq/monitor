@@ -133,6 +133,11 @@
 
     "Appearance": "Design",
     "Theme": "Thema",
+    "UIThemeMode": "Fensterdesign",
+    "UIModeDark": "Dunkel",
+    "UIModeLight": "Hell",
+    "UIModeSystem": "Systemeinstellung",
+    "UIThemeModeHint": "Gilt für Einstellungen und andere Fenster nach dem erneuten Öffnen",
     "DisplayMode": "Modus",
     "Vertical": "Box",
     "Horizontal": "Leiste",

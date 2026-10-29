@@ -78,6 +78,18 @@ namespace LiteMonitor.src.UI.SettingsPage
         {
             var group = new LiteSettingsGroup(LanguageManager.T("Menu.Appearance"));
 
+            // 0. 应用窗口明暗（与面板主题相互独立）
+            group.AddComboPair(this, LanguageManager.T("Menu.UIThemeMode"),
+                new[]
+                {
+                    new { Label = LanguageManager.T("Menu.UIModeSystem"), Value = "system" },
+                    new { Label = LanguageManager.T("Menu.UIModeDark"), Value = "dark" },
+                    new { Label = LanguageManager.T("Menu.UIModeLight"), Value = "light" }
+                },
+                () => Config.UIThemeMode,
+                v => Config.UIThemeMode = v);
+            group.AddHint(LanguageManager.T("Menu.UIThemeModeHint"));
+
             // 1. Theme
             group.AddCombo(this, "Menu.Theme", ThemeManager.GetAvailableThemes(), 
                 () => Config.Skin, 

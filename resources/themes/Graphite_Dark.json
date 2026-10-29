@@ -1,0 +1,42 @@
+{
+  "version": 3,
+  "name": "Graphite_Dark",
+  "layout": {
+    "rowHeight": 40,
+    "padding": 12,
+    "cornerRadius": 18,
+    "groupRadius": 12,
+    "groupPadding": 8,
+    "groupSpacing": 30,
+    "groupBottom": 0,
+    "groupTitleOffset": 6,
+    "itemGap": 4
+  },
+  "font": {
+    "family": "Microsoft YaHei UI",
+    "valueFamily": "Consolas",
+    "title": 11.0,
+    "group": 9.0,
+    "item": 10.0,
+    "value": 13.5,
+    "bold": false,
+    "scale": 1.0
+  },
+  "color": {
+    "background": "#14171C",
+    "border": "#262A32",
+    "shadow": "rgba(0,0,0,0.5)",
+    "textTitle": "#E8EAED",
+    "textGroup": "#7D8590",
+    "textPrimary": "#C9CDD3",
+    "textSecondary": "#9AA1AC",
+    "valueSafe": "#E8EAED",
+    "valueWarn": "#F2B24C",
+    "valueCrit": "#FF6B6B",
+    "barBackground": "#232830",
+    "barLow": "#6CB6FF",
+    "barMid": "#F2B24C",
+    "barHigh": "#FF6B6B",
+    "groupBackground": "#181B21"
+  }
+}

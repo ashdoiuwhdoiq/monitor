@@ -6,22 +6,66 @@ using LiteMonitor.src.UI.SettingsPage;
 
 namespace LiteMonitor.src.UI.Controls
 {
+    /// <summary>
+    /// 应用窗口（设置等）的 Graphite 色板。打开窗口前调用 Apply 选定深色或浅色，
+    /// 控件在构造时读取这里的颜色。
+    /// </summary>
     public static class UIColors
     {
-        public static Color MainBg = Color.FromArgb(243, 243, 243);
-        public static Color SidebarBg = Color.FromArgb(240, 240, 240);
-        public static Color CardBg = Color.White;
-        public static Color Border = Color.FromArgb(220, 220, 220);
-        public static Color Primary = Color.FromArgb(0, 120, 215);
-        public static Color TextMain = Color.FromArgb(32, 32, 32);
-        public static Color TextSub = Color.FromArgb(90, 90, 90);
-        public static Color GroupHeader = Color.FromArgb(248, 249, 250); 
-        
-        public static Color NavSelected = Color.FromArgb(230, 230, 230); 
-        public static Color NavHover = Color.FromArgb(235, 235, 235);
+        public static bool IsDark { get; private set; }
 
-        public static Color TextWarn = Color.FromArgb(215, 145, 0); 
-        public static Color TextCrit = Color.FromArgb(220, 50, 50); 
+        public static Color MainBg, SidebarBg, CardBg, Border, Primary, OnPrimary, TextMain, TextSub, Muted,
+            GroupHeader, NavSelected, NavHover, TextWarn, TextCrit, Divider, LineSoft, ChipBg, Link, LinkHover;
+
+        static UIColors() => Apply("light");
+
+        /// <param name="mode">"dark" / "light" / "system"，其它值按 system 处理</param>
+        public static void Apply(string? mode)
+        {
+            IsDark = mode == "dark" || (mode != "light" && !IsSystemLight());
+            if (IsDark)
+            {
+                MainBg = Hex("#111317"); SidebarBg = Hex("#0D0F12"); CardBg = Hex("#161920"); Border = Hex("#262A32");
+                Primary = Hex("#6CB6FF"); OnPrimary = Hex("#0B0D10"); TextMain = Hex("#E8EAED"); TextSub = Hex("#9AA1AC");
+                Muted = Hex("#7D8590"); GroupHeader = Hex("#1A1E25"); NavSelected = Hex("#1C2028"); NavHover = Hex("#171A20");
+                TextWarn = Hex("#F2B24C"); TextCrit = Hex("#FF6B6B"); Divider = Hex("#20242C"); LineSoft = Hex("#3A404B");
+                ChipBg = Hex("#262B34"); Link = Hex("#6CB6FF"); LinkHover = Hex("#9CCDFF");
+            }
+            else
+            {
+                MainBg = Hex("#F7F8FA"); SidebarBg = Hex("#EFF1F4"); CardBg = Hex("#FFFFFF"); Border = Hex("#DFE3E8");
+                Primary = Hex("#1F6FD1"); OnPrimary = Color.White; TextMain = Hex("#15181D"); TextSub = Hex("#555C66");
+                Muted = Hex("#666D77"); GroupHeader = Hex("#F5F6F8"); NavSelected = Hex("#E3E7EC"); NavHover = Hex("#E9ECF0");
+                TextWarn = Hex("#9A5B00"); TextCrit = Hex("#CF3535"); Divider = Hex("#ECEEF2"); LineSoft = Hex("#C5CBD3");
+                ChipBg = Hex("#E8EBEF"); Link = Hex("#1F6FD1"); LinkHover = Hex("#1B5FB4");
+            }
+        }
+
+        /// <summary>让窗口标题栏跟随当前深浅模式（Windows 10 1809+ 生效，旧系统忽略）。</summary>
+        public static void ApplyTitleBar(Form form)
+        {
+            void Set()
+            {
+                int on = IsDark ? 1 : 0;
+                try { DwmSetWindowAttribute(form.Handle, 20, ref on, sizeof(int)); } catch { }
+            }
+            if (form.IsHandleCreated) Set(); else form.HandleCreated += (s, e) => Set();
+        }
+
+        private static bool IsSystemLight()
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+                return key?.GetValue("AppsUseLightTheme") is int v ? v != 0 : true;
+            }
+            catch { return true; }
+        }
+
+        private static Color Hex(string s) => ColorTranslator.FromHtml(s);
+
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
     }
 
     public class LiteActionRow : Panel
@@ -88,7 +132,7 @@ namespace LiteMonitor.src.UI.Controls
             var inputWarn = new LiteNumberInput(range.Warn.ToString(), unit, LanguageManager.T("Menu.ValueWarnColor"), 140, UIColors.TextWarn);
             inputWarn.Padding = UIUtils.S(new Padding(0, 5, 0, 1));
             
-            var arrow = new Label { Text = "➜", AutoSize = true, ForeColor = Color.LightGray, Font = new Font("Microsoft YaHei UI", 9F), Margin = UIUtils.S(new Padding(5, 4, 5, 0)) };
+            var arrow = new Label { Text = "➜", AutoSize = true, ForeColor = UIColors.LineSoft, Font = new Font("Microsoft YaHei UI", 9F), Margin = UIUtils.S(new Padding(5, 4, 5, 0)) };
             
             var inputCrit = new LiteNumberInput(range.Crit.ToString(), unit, LanguageManager.T("Menu.ValueCritColor"), 140, UIColors.TextCrit);
             inputCrit.Padding = UIUtils.S(new Padding(0, 5, 0, 1));
@@ -115,7 +159,7 @@ namespace LiteMonitor.src.UI.Controls
             
             // Separator Line
             this.Paint += (s, e) => {
-                using(var p = new Pen(Color.FromArgb(240, 240, 240))) e.Graphics.DrawLine(p, 0, Height-1, Width, Height-1);
+                using(var p = new Pen(UIColors.Divider)) e.Graphics.DrawLine(p, 0, Height-1, Width, Height-1);
             };
         }
     }
@@ -133,8 +177,8 @@ namespace LiteMonitor.src.UI.Controls
                 Text = text, 
                 AutoSize = true, 
                 MaximumSize = new Size(UIUtils.S(500), 0), // Limit width to trigger wrap? Actual width set in Layout
-                Font = new Font("Microsoft YaHei UI", 8F), 
-                ForeColor = Color.Gray,
+                Font = new Font("Microsoft YaHei UI", 8F),
+                ForeColor = UIColors.Muted,
                 Dock = DockStyle.Fill
             };
             this.Controls.Add(lbl);
@@ -171,7 +215,7 @@ namespace LiteMonitor.src.UI.Controls
             // ★★★ 修改：Margin 缩放
             this.Margin = new Padding(0, 0, 0, UIUtils.S(15)); 
 
-            var inner = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, AutoSize = true };
+            var inner = new Panel { Dock = DockStyle.Fill, BackColor = UIColors.CardBg, AutoSize = true };
             
             // ★★★ 修改：Height 缩放
             _header = new Panel { Dock = DockStyle.Top, Height = UIUtils.S(40), BackColor = UIColors.GroupHeader, Padding = new Padding(0, 0, UIUtils.S(10), 0) }; // 增加右侧Padding
@@ -188,7 +232,7 @@ namespace LiteMonitor.src.UI.Controls
             {
                 Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 1,
                 // ★★★ 修改：Padding 缩放
-                Padding = UIUtils.S(new Padding(25, 10, 25, 15)), BackColor = Color.White
+                Padding = UIUtils.S(new Padding(25, 10, 25, 15)), BackColor = UIColors.CardBg
             };
             _layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
             _layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
@@ -266,7 +310,7 @@ namespace LiteMonitor.src.UI.Controls
                 ctrl.Location = new Point(this.Width - ctrl.Width, mid - ctrl.Height / 2);
             };
             this.Paint += (s, e) => {
-                using(var p = new Pen(Color.FromArgb(240, 240, 240))) 
+                using(var p = new Pen(UIColors.Divider))
                     e.Graphics.DrawLine(p, 0, Height-1, Width, Height-1);
             };
         }
@@ -318,7 +362,7 @@ namespace LiteMonitor.src.UI.Controls
                 Text = text,
                 BorderStyle = BorderStyle.None,
                 Dock = DockStyle.Fill,
-                BackColor = Color.White,
+                BackColor = UIColors.CardBg,
                 Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular),
                 ForeColor = fontColor ?? UIColors.TextSub,
                 TextAlign = align 
@@ -332,9 +376,9 @@ namespace LiteMonitor.src.UI.Controls
                     Text = unit,
                     AutoSize = true, 
                     Dock = DockStyle.Right,
-                    Font = new Font("Microsoft YaHei UI", 8F), 
-                    ForeColor = Color.Gray, 
-                    TextAlign = ContentAlignment.BottomRight, 
+                    Font = new Font("Microsoft YaHei UI", 8F),
+                    ForeColor = UIColors.Muted,
+                    TextAlign = ContentAlignment.BottomRight,
                     Padding = new Padding(0, 0, 0, 4) 
                 };
                 this.Controls.Add(_lblUnit); 
@@ -375,7 +419,7 @@ namespace LiteMonitor.src.UI.Controls
         public void SetBg(Color c) { Inner.BackColor = c; }
         
         protected override void OnPaint(PaintEventArgs e) {
-            var c = Inner.Focused ? UIColors.Primary : Color.LightGray; 
+            var c = Inner.Focused ? UIColors.Primary : UIColors.LineSoft;
             int h = Inner.Focused ? 2 : 1;
 
             // 画线逻辑：如果有左侧标签，线条从标签右侧开始画
@@ -457,11 +501,11 @@ namespace LiteMonitor.src.UI.Controls
         public LiteColorPicker(string initialHex) { SetHex(initialHex); this.Size = new Size(UIUtils.S(24), UIUtils.S(24)); this.Cursor = Cursors.Hand; this.DoubleBuffered = true; this.Click += (s, e) => PickColor(); }
         public void SetHex(string hex) { try { _color = ColorTranslator.FromHtml(hex); Invalidate(); } catch {} }
         private void PickColor() { using (var cd = new ColorDialog()) { cd.Color = _color; cd.FullOpen = true; if (cd.ShowDialog() == DialogResult.OK) { _color = cd.Color; ColorChanged?.Invoke(this, EventArgs.Empty); Invalidate(); } } }
-        protected override void OnPaint(PaintEventArgs e) { using (var b = new SolidBrush(_color)) e.Graphics.FillRectangle(b, 0, 0, Width - 1, Height - 1); using (var p = new Pen(Color.Gray)) e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1); }
+        protected override void OnPaint(PaintEventArgs e) { using (var b = new SolidBrush(_color)) e.Graphics.FillRectangle(b, 0, 0, Width - 1, Height - 1); using (var p = new Pen(UIColors.Border)) e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1); }
     }
 
     // 其他原有组件
-    public class LiteNote : Panel { public LiteNote(string text, int indent = 0) { this.Dock = DockStyle.Top; this.Height = UIUtils.S(32); this.Margin = new Padding(0); var lbl = new Label { Text = text, AutoSize = true, Font = new Font("Microsoft YaHei UI", 8F), ForeColor = Color.Gray, Location = new Point(UIUtils.S(indent), UIUtils.S(10)) }; this.Controls.Add(lbl); } }
+    public class LiteNote : Panel { public LiteNote(string text, int indent = 0) { this.Dock = DockStyle.Top; this.Height = UIUtils.S(32); this.Margin = new Padding(0); var lbl = new Label { Text = text, AutoSize = true, Font = new Font("Microsoft YaHei UI", 8F), ForeColor = UIColors.Muted, Location = new Point(UIUtils.S(indent), UIUtils.S(10)) }; this.Controls.Add(lbl); } }
     public class LiteComboItem 
     { 
         public string Text { get; set; } 
@@ -485,8 +529,8 @@ namespace LiteMonitor.src.UI.Controls
         
         public LiteComboBox() 
         { 
-            this.Size = new Size(UIUtils.S(110), UIUtils.S(28)); 
-            this.BackColor = Color.White; 
+            this.Size = new Size(UIUtils.S(110), UIUtils.S(28));
+            this.BackColor = UIColors.CardBg;
             this.Padding = new Padding(1); 
             
             Inner = new NoScrollComboBox 
@@ -496,8 +540,8 @@ namespace LiteMonitor.src.UI.Controls
                 ForeColor = UIColors.TextSub, 
                 Font = new Font("Microsoft YaHei UI", 9F), 
                 // ★★★ 核心修复：移除 Dock.Fill，改为 None，以便我们可以手动居中它
-                Dock = DockStyle.None, 
-                BackColor = Color.White, 
+                Dock = DockStyle.None,
+                BackColor = UIColors.CardBg,
                 Margin = new Padding(0) 
             }; 
             this.Controls.Add(Inner); 
@@ -557,8 +601,8 @@ namespace LiteMonitor.src.UI.Controls
     }
     public class LiteLink : Label
     {
-        private Color _normalColor = Color.DodgerBlue;
-        private Color _hoverColor = Color.FromArgb(0, 100, 200);
+        private Color _normalColor = UIColors.Link;
+        private Color _hoverColor = UIColors.LinkHover;
 
         public LiteLink(string text, Action onClick = null)
         {
@@ -589,7 +633,7 @@ namespace LiteMonitor.src.UI.Controls
             { 
                 base.Enabled = value;
                 this.Cursor = value ? Cursors.Hand : Cursors.Default;
-                this.ForeColor = value ? _normalColor : Color.Gray;
+                this.ForeColor = value ? _normalColor : UIColors.Muted;
             } 
         }
     }
@@ -616,8 +660,8 @@ namespace LiteMonitor.src.UI.Controls
             
             if (p) 
             { 
-                BackColor = UIColors.Primary; 
-                ForeColor = Color.White; 
+                BackColor = UIColors.Primary;
+                ForeColor = UIColors.OnPrimary;
                 FlatAppearance.BorderSize = 0; 
             } 
             else if (dashed)
@@ -628,8 +672,8 @@ namespace LiteMonitor.src.UI.Controls
             }
             else 
             { 
-                BackColor = Color.White; 
-                ForeColor = UIColors.TextMain; 
+                BackColor = UIColors.CardBg;
+                ForeColor = UIColors.TextMain;
                 FlatAppearance.BorderColor = UIColors.Border; 
             } 
         } 
@@ -639,7 +683,7 @@ namespace LiteMonitor.src.UI.Controls
             base.OnPaint(e);
             if (_dashed)
             {
-                using (var pen = new Pen(Color.LightGray, 1.5f) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash })
+                using (var pen = new Pen(UIColors.LineSoft, 1.5f) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash })
                 {
                     e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
                 }
@@ -647,7 +691,7 @@ namespace LiteMonitor.src.UI.Controls
         }
     }
     public class LiteNavBtn : Button { private bool _isActive; private readonly Font _fontRegular = new Font("Microsoft YaHei UI", 10F); private readonly Font _fontBold = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold); public bool IsActive { get => _isActive; set { _isActive = value; Invalidate(); } } public LiteNavBtn(string text) { Text = "  " + text; Size = new Size(UIUtils.S(150), UIUtils.S(40)); FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; TextAlign = ContentAlignment.MiddleLeft; Font = _fontRegular; Cursor = Cursors.Hand; Margin = UIUtils.S(new Padding(5, 2, 5, 2)); BackColor = UIColors.SidebarBg; ForeColor = UIColors.TextMain; } protected override void OnPaint(PaintEventArgs e) { Color bg = _isActive ? UIColors.NavSelected : (ClientRectangle.Contains(PointToClient(Cursor.Position)) ? UIColors.NavHover : UIColors.SidebarBg); using (var b = new SolidBrush(bg)) e.Graphics.FillRectangle(b, ClientRectangle); if (_isActive) { using (var b = new SolidBrush(UIColors.Primary)) e.Graphics.FillRectangle(b, 0, UIUtils.S(8), UIUtils.S(3), Height - UIUtils.S(16)); } TextRenderer.DrawText(e.Graphics, Text, _isActive ? _fontBold : _fontRegular, new Point(UIUtils.S(12), UIUtils.S(9)), UIColors.TextMain); } protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); Invalidate(); } protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); Invalidate(); } protected override void Dispose(bool disposing) { if (disposing) { _fontRegular.Dispose(); _fontBold.Dispose(); } base.Dispose(disposing); } }
-    public class LiteSortBtn : Button { public LiteSortBtn(string txt) { Text = txt; Size = new Size(UIUtils.S(24), UIUtils.S(24)); FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; BackColor = Color.FromArgb(245, 245, 245); ForeColor = Color.DimGray; Cursor = Cursors.Hand; Font = new Font("Microsoft YaHei UI", 7F, FontStyle.Bold); Margin = new Padding(0); } }
+    public class LiteSortBtn : Button { public LiteSortBtn(string txt) { Text = txt; Size = new Size(UIUtils.S(24), UIUtils.S(24)); FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; BackColor = UIColors.ChipBg; ForeColor = UIColors.TextSub; Cursor = Cursors.Hand; Font = new Font("Microsoft YaHei UI", 7F, FontStyle.Bold); Margin = new Padding(0); } }
     
     // ★★★ New: Header Button (Variable Width) ★★★
     public class LiteHeaderBtn : Button 
@@ -657,8 +701,8 @@ namespace LiteMonitor.src.UI.Controls
             Text = txt; 
             FlatStyle = FlatStyle.Flat; 
             FlatAppearance.BorderSize = 0; 
-            BackColor = Color.FromArgb(225, 225, 225); 
-            ForeColor = Color.DimGray; 
+            BackColor = UIColors.ChipBg;
+            ForeColor = UIColors.TextSub;
             Cursor = Cursors.Hand; 
             Font = new Font("Microsoft YaHei UI", 8F, FontStyle.Bold); 
             Margin = new Padding(0);

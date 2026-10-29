@@ -133,6 +133,11 @@
 
     "Appearance": "Внешний вид",
     "Theme": "Тема",
+    "UIThemeMode": "Тема окон",
+    "UIModeDark": "Тёмная",
+    "UIModeLight": "Светлая",
+    "UIModeSystem": "Как в системе",
+    "UIThemeModeHint": "Применяется к настройкам и другим окнам после повторного открытия",
     "DisplayMode": "Режим",
     "Vertical": "Панель",
     "Horizontal": "Полоса",

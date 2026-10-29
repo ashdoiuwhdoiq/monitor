@@ -134,6 +134,11 @@
 
     "Appearance": "外観設定",
     "Theme": "テーマ",
+    "UIThemeMode": "ウィンドウのテーマ",
+    "UIModeDark": "ダーク",
+    "UIModeLight": "ライト",
+    "UIModeSystem": "システム設定に従う",
+    "UIThemeModeHint": "設定などのウィンドウを開き直すと反映されます",
     "DisplayMode": "表示モード",
     "Vertical": "パネル",
     "Horizontal": "バー",

@@ -133,6 +133,11 @@
 
     "Appearance": "Appearance",
     "Theme": "Theme",
+    "UIThemeMode": "Window theme",
+    "UIModeDark": "Dark",
+    "UIModeLight": "Light",
+    "UIModeSystem": "Use system setting",
+    "UIThemeModeHint": "Applies to Settings and other windows after reopening",
     "DisplayMode": "Display Mode",
     "Vertical": "Panel",
     "Horizontal": "Bar",

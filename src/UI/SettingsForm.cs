@@ -64,6 +64,9 @@ namespace LiteMonitor.src.UI
         private void InitializeComponent()
         {
             UIUtils.ScaleFactor = this.DeviceDpi / 96f;
+            UIColors.Apply(_cfg.UIThemeMode);
+            UIColors.ApplyTitleBar(this);
+            this.ForeColor = UIColors.TextMain;
 
             this.Size = new Size(UIUtils.S(820), UIUtils.S(680));
             this.FormBorderStyle = FormBorderStyle.FixedDialog;

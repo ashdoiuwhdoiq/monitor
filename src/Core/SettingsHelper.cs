@@ -93,14 +93,23 @@ namespace LiteMonitor
             }
         }
 
+        /// <summary>
+        /// 「恢复默认」：把现有设置改名为 *.reset-时间戳 留存，而不是直接删除，误操作也能找回。
+        /// </summary>
         public static void DeleteStoredSettings()
         {
             lock (_ioLock)
             {
-                DeleteFileIfExists(_store.FilePath);
-                DeleteFileIfExists(_store.BackupPath);
+                string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                SetAsideIfExists(_store.FilePath, stamp);
+                SetAsideIfExists(_store.BackupPath, stamp);
                 DeleteFileIfExists(_store.TempPath);
             }
+        }
+
+        private static void SetAsideIfExists(string path, string stamp)
+        {
+            if (File.Exists(path)) File.Move(path, $"{path}.reset-{stamp}", false);
         }
 
         private static void DeleteFileIfExists(string path)

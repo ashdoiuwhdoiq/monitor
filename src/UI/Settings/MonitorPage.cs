@@ -134,7 +134,7 @@ namespace LiteMonitor.src.UI.SettingsPage
         private void UpdateBtnStyle(Button btn, bool active)
         {
             btn.BackColor = active ? UIColors.Primary : Color.Transparent;
-            btn.ForeColor = active ? Color.White : UIColors.TextSub;
+            btn.ForeColor = active ? UIColors.OnPrimary : UIColors.TextSub;
         }
 
         private void SwitchTab(bool toTaskbarMode)
@@ -392,7 +392,7 @@ namespace LiteMonitor.src.UI.SettingsPage
         {
             string alias = Config.GroupAliases.ContainsKey(groupKey) ? Config.GroupAliases[groupKey] : "";
             var header = new MonitorGroupHeader(groupKey, alias);
-            var rowsPanel = new Panel { Dock = DockStyle.Top, AutoSize = true, BackColor = Color.White };
+            var rowsPanel = new Panel { Dock = DockStyle.Top, AutoSize = true, BackColor = UIColors.CardBg };
             var block = new GroupBlock(header, rowsPanel);
 
             header.MoveUp += GroupHeader_MoveUp;
