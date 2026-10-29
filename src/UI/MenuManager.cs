@@ -376,6 +376,26 @@ namespace LiteMonitor
                 themeRoot.DropDownItems.Add(item);
             }
             menu.Items.Add(themeRoot);
+
+            // === 界面模式：菜单与各窗口的深浅色，立即生效 ===
+            var uiModeRoot = new ToolStripMenuItem(LanguageManager.T("Menu.UIThemeMode"));
+            foreach (var (mode, key) in new[] { ("system", "Menu.UIModeSystem"), ("dark", "Menu.UIModeDark"), ("light", "Menu.UIModeLight") })
+            {
+                var item = new ToolStripMenuItem(LanguageManager.T(key))
+                {
+                    Checked = string.Equals(cfg.UIThemeMode, mode, StringComparison.OrdinalIgnoreCase)
+                };
+                item.Click += (_, __) =>
+                {
+                    cfg.UIThemeMode = mode;
+                    cfg.Save();
+                    src.UI.Controls.UIColors.Apply(mode);
+                    src.UI.Controls.GraphiteMenuRenderer.Install();
+                    form.BeginInvoke(new Action(form.RebuildMenus));
+                };
+                uiModeRoot.DropDownItems.Add(item);
+            }
+            menu.Items.Add(uiModeRoot);
             menu.Items.Add(new ToolStripSeparator());
 
 

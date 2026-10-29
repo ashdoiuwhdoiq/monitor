@@ -223,11 +223,13 @@ namespace LiteMonitor
                     _bizHelper.SavePos();
                     _dragMoved = false;
                 }
-                else
+                else if (_ui != null && !_ui.HandleClick(e.Location))
                 {
-                    _ui?.HandleClick(e.Location);
+                    ToggleDetailCard(e.Location);
                 }
             };
+            Move += (_, __) => { if (_dragMoved) _detailCard?.HideCard(); };
+            VisibleChanged += (_, __) => { if (!Visible) _detailCard?.HideCard(); };
 
             // 双击
             this.DoubleClick += (_, __) => _bizHelper.HandleDoubleClick();
@@ -236,6 +238,25 @@ namespace LiteMonitor
             this.Resize += (_, __) => _winHelper.ApplyRoundedCorners();
             this.VisibleChanged += (_, __) => { if (Visible) _winHelper.RefreshTopMost(_cfg.TopMost, forceReinsert: true); };
             this.HandleCreated += (_, __) => _winHelper.RefreshTopMost(_cfg.TopMost, forceReinsert: true);
+        }
+
+        // ==== 详情卡 ====
+        private DetailCardForm? _detailCard;
+
+        /// <summary>单击某一行：打开它的详情卡；再点同一行或点空白处则收起。</summary>
+        private void ToggleDetailCard(Point clientPt)
+        {
+            string group = "";
+            var item = _ui?.HitItem(clientPt, out group);
+            if (item == null ||(_detailCard != null && _detailCard.CurrentItem == item))
+            {
+                _detailCard?.HideCard();
+                return;
+            }
+
+            if (_detailCard == null || _detailCard.IsDisposed) _detailCard = new DetailCardForm(_cfg);
+            var row = RectangleToScreen(item.Bounds);
+            _detailCard.ShowFor(item, group, Bounds, row, _cfg.TopMost);
         }
 
         public void ShowMainWindow()

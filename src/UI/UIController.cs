@@ -361,6 +361,25 @@ namespace LiteMonitor
             return false;
         }
 
+        /// <summary>命中竖屏面板中的某一行（折叠中的组不算），并返回它所在分组的显示名。</summary>
+        public MetricItem? HitItem(Point clientPt, out string groupLabel)
+        {
+            groupLabel = "";
+            if (_cfg.HorizontalMode) return null;
+            foreach (var g in _groups)
+            {
+                if (g.Expand < 0.99f) continue;
+                foreach (var it in g.Items)
+                {
+                    if (it.Style == MetricRenderStyle.TextOnly || !it.Value.HasValue) continue;
+                    if (!it.Bounds.Contains(clientPt)) continue;
+                    groupLabel = string.IsNullOrEmpty(g.Label) ? g.GroupName : g.Label;
+                    return it;
+                }
+            }
+            return null;
+        }
+
         /// <summary>鼠标是否在可点击的分组标题上（用于切换手形光标）。</summary>
         public bool IsOverHeader(Point clientPt)
         {
