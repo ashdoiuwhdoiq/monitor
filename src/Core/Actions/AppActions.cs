@@ -28,6 +28,7 @@ namespace LiteMonitor.src.Core.Actions
             // 应用窗口与菜单的深浅模式（菜单在之后的 RebuildMenus 中按新色板重建）
             LiteMonitor.src.UI.Controls.UIColors.Apply(cfg.UIThemeMode);
             LiteMonitor.src.UI.Controls.GraphiteMenuRenderer.Install();
+            SyncGraphiteSkin(cfg);
 
             // 1. 语言变更 (注意：传 null 给 ui，防止它在此提前触发 ApplyTheme)
             ApplyLanguage(cfg, null, mainForm); 
@@ -144,6 +145,36 @@ namespace LiteMonitor.src.Core.Actions
         // =============================================================
         // 4. 外观与布局 (主题、缩放、宽度、刷新率、显示模式)
         // =============================================================
+
+        /// <summary>
+        /// 面板用的是 Graphite 主题时，让它跟随界面模式在深色 / 浅色两套之间切换。
+        /// 需在 UIColors.Apply 之后调用；返回主题是否发生了变化。
+        /// </summary>
+        public static bool SyncGraphiteSkin(Settings cfg)
+        {
+            if (cfg.Skin == null || !cfg.Skin.StartsWith("Graphite_", StringComparison.OrdinalIgnoreCase)) return false;
+            string want = LiteMonitor.src.UI.Controls.UIColors.IsDark ? "Graphite_Dark" : "Graphite_Light";
+            if (string.Equals(cfg.Skin, want, StringComparison.OrdinalIgnoreCase)) return false;
+            cfg.Skin = want;
+            return true;
+        }
+
+        /// <summary>
+        /// 切换界面模式（菜单、系统明暗变化时调用）：更新色板与菜单，Graphite 面板以圆形揭开切换到新主题。
+        /// origin 为揭开的圆心（面板客户区坐标），null 表示面板中心。
+        /// </summary>
+        public static void ApplyUIMode(Settings cfg, UIController? ui, MainForm form, Point? origin)
+        {
+            LiteMonitor.src.UI.Controls.UIColors.Apply(cfg.UIThemeMode);
+            LiteMonitor.src.UI.Controls.GraphiteMenuRenderer.Install();
+            if (SyncGraphiteSkin(cfg))
+            {
+                cfg.Save();
+                ui?.BeginReveal(origin);
+                ApplyThemeAndLayout(cfg, ui, form);
+            }
+            form.BeginInvoke(new Action(form.RebuildMenus));
+        }
 
         public static void ApplyThemeAndLayout(Settings cfg, UIController? ui, MainForm form, bool? wasHorizontal = null, bool retainData = false)
         {

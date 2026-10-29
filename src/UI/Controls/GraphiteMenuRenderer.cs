@@ -24,6 +24,48 @@ namespace LiteMonitor.src.UI.Controls
             ToolStripManager.Renderer = new GraphiteMenuRenderer();
         }
 
+        // ===== 弹出动效：菜单淡入并下滑到位，菜单项依次浮现（设计稿：每项间隔 25ms，.32s 缓出）=====
+        private const float FadeMs = 160, ItemMs = 320, ItemStaggerMs = 25, SlidePx = 6;
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ToolStripDropDown, OpenState> _open = new();
+        private static readonly System.Collections.Generic.List<ToolStripDropDown> _animating = new();
+        private static readonly System.Windows.Forms.Timer _animTimer = CreateTimer();
+
+        private sealed class OpenState { public long Start; public Point Target; }
+
+        private static System.Windows.Forms.Timer CreateTimer()
+        {
+            var t = new System.Windows.Forms.Timer { Interval = 15 };
+            t.Tick += (_, __) =>
+            {
+                long now = LiteMonitor.Motion.Now;
+                for (int i = _animating.Count - 1; i >= 0; i--)
+                {
+                    var dd = _animating[i];
+                    if (dd.IsDisposed || !dd.Visible || !_open.TryGetValue(dd, out var st)) { _animating.RemoveAt(i); continue; }
+                    long el = now - st.Start;
+                    float fade = Math.Clamp(el / FadeMs, 0f, 1f);
+                    float slide = LiteMonitor.Motion.Spring.Eval(Math.Clamp(el / 380f, 0f, 1f));
+                    try
+                    {
+                        dd.Opacity = fade;
+                        dd.Location = new Point(st.Target.X, st.Target.Y - (int)Math.Round((1 - slide) * UIUtils.S((int)SlidePx)));
+                    }
+                    catch { }
+                    dd.Invalidate();
+                    if (el > ItemStaggerMs * dd.Items.Count + ItemMs + 40 && el > 400) _animating.RemoveAt(i);
+                }
+                if (_animating.Count == 0) t.Stop();
+            };
+            return t;
+        }
+
+        private static float ItemProgress(ToolStripItem item)
+        {
+            if (item.Owner is not ToolStripDropDown dd || !_open.TryGetValue(dd, out var st)) return 1f;
+            int index = dd.Items.IndexOf(item);
+            return LiteMonitor.Motion.Out.Eval(LiteMonitor.Motion.Progress(st.Start, index * ItemStaggerMs, ItemMs, LiteMonitor.Motion.Now));
+        }
+
         protected override void Initialize(ToolStrip toolStrip)
         {
             base.Initialize(toolStrip);
@@ -33,6 +75,16 @@ namespace LiteMonitor.src.UI.Controls
                 dd.Padding = new Padding(UIUtils.S(4), UIUtils.S(4), UIUtils.S(4), UIUtils.S(4));
                 dd.HandleCreated += (s, e) => ApplyWin11Corners(dd);
                 if (dd.IsHandleCreated) ApplyWin11Corners(dd);
+
+                dd.Opening += (s, e) => { try { dd.Opacity = 0; } catch { } };
+                dd.Opened += (s, e) =>
+                {
+                    var st = _open.GetOrCreateValue(dd);
+                    st.Start = LiteMonitor.Motion.Now;
+                    st.Target = dd.Location;
+                    if (!_animating.Contains(dd)) _animating.Add(dd);
+                    _animTimer.Start();
+                };
             }
         }
 
@@ -64,8 +116,36 @@ namespace LiteMonitor.src.UI.Controls
 
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
         {
-            e.TextColor = e.Item.Enabled ? UIColors.TextMain : UIColors.Muted;
+            float k = ItemProgress(e.Item);
+            Color c = e.Item.Enabled ? UIColors.TextMain : UIColors.Muted;
+            e.TextColor = Mix(UIColors.CardBg, c, k);
+            var r = e.TextRectangle;
+            r.Offset(0, (int)Math.Round((1 - k) * UIUtils.S(6)));
+            e.TextRectangle = r;
             base.OnRenderItemText(e);
+
+            // 设计稿里可开关的菜单项画成右侧的开关
+            if (e.Item is ToolStripMenuItem mi && mi.CheckOnClick)
+                DrawSwitch(e.Graphics, mi, k);
+        }
+
+        private static void DrawSwitch(Graphics g, ToolStripMenuItem mi, float k)
+        {
+            int w = UIUtils.S(30), h = UIUtils.S(18);
+            var track = new Rectangle(mi.Width - UIUtils.S(14) - w, (mi.Height - h) / 2 + (int)Math.Round((1 - k) * UIUtils.S(6)), w, h);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Color on = UIColors.Primary, off = UIColors.LineSoft;
+            UIUtils.FillRoundRect(g, track, h / 2, Mix(UIColors.CardBg, mi.Checked ? on : off, k));
+            int d = h - UIUtils.S(4);
+            int x = mi.Checked ? track.Right - d - UIUtils.S(2) : track.X + UIUtils.S(2);
+            using var knob = new SolidBrush(Mix(UIColors.CardBg, Color.White, k));
+            g.FillEllipse(knob, x, track.Y + UIUtils.S(2), d, d);
+        }
+
+        private static Color Mix(Color a, Color b, float k)
+        {
+            k = Math.Clamp(k, 0f, 1f);
+            return Color.FromArgb((int)(a.R + (b.R - a.R) * k), (int)(a.G + (b.G - a.G) * k), (int)(a.B + (b.B - a.B) * k));
         }
 
         protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
@@ -83,6 +163,8 @@ namespace LiteMonitor.src.UI.Controls
 
         protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
         {
+            if (e.Item is ToolStripMenuItem mi && mi.CheckOnClick) return; // 已画成右侧开关
+            if (ItemProgress(e.Item) < 0.5f) return;
             var r = e.ImageRectangle;
             int size = Math.Min(r.Width, r.Height);
             var box = new Rectangle(r.X + (r.Width - size) / 2, r.Y + (r.Height - size) / 2, size, size);

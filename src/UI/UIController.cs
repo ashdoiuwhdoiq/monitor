@@ -22,6 +22,11 @@ namespace LiteMonitor
         private long _lastFrameMs;
         private MetricItem? _hoverItem;
         private const float CollapseTauMs = 110f;
+        private const float LivePulseMs = 700f;
+        private long _lastTickMs = -100000;
+
+        // 竖向面板（Graphite 设计稿版式）
+        private readonly GraphitePanel _panel = new GraphitePanel();
 
         private UILayout _layout;
         private bool _layoutDirty = true;
@@ -125,6 +130,12 @@ namespace LiteMonitor
             
             _layoutDirty = true;
 
+            // 密度状态与设置同步（不播放过渡），换主题 / 启动时播放入场动效
+            float compactNow = _cfg.PanelCompact ? 1f : 0f;
+            _panel.Compact.Snap(compactNow);
+            _panel.SegThumb.Snap(compactNow);
+            if (!retainData) PlayEntrance();
+
             _form.BackColor = ThemeManager.ParseColor(t.Color.Background);
 
             _timer.Interval = Math.Max(80, _cfg.RefreshMs);
@@ -168,20 +179,21 @@ namespace LiteMonitor
                 return;
             }
 
-            // === 竖屏模式 ===
+            // === 竖屏模式（Graphite 版式）===
             if (_layoutDirty)
             {
-                int h = _layout.Build(_groups);
+                int h = _panel.Build(_groups, t, _form.ClientSize.Width);
                 // [修复2补充] 设置高度时也使用 ClientSize，确保高度精准
                 _form.ClientSize = new Size(_form.ClientSize.Width, h);
                 _layoutDirty = false;
             }
 
-            // === [关键修改] 获取布局中的看板信息 ===
-            // var dashboard = _layout.Dashboard; // 已移除
-            // ==========================================
-
-            UIRenderer.Render(g, _groups, t);
+            _panel.TopMost = _cfg.TopMost;
+            _panel.RefreshMs = _cfg.RefreshMs;
+            _panel.Uptime = InfoService.Instance.GetValue("Uptime");
+            _panel.Selected = (_form as MainForm)?.DetailCardItem;
+            _panel.Render(g, _groups, t, _form.ClientSize);
+            DrawReveal(g, _form.ClientSize);
         }
 
         private bool _busy = false;
@@ -259,6 +271,7 @@ namespace LiteMonitor
                 }
 
                 _form.Invalidate();
+                _lastTickMs = _animClock.ElapsedMilliseconds;
                 StartAnim();
             }
             finally
@@ -286,21 +299,28 @@ namespace LiteMonitor
             double speed = _cfg.AnimationSpeed;
             bool moving = false;
 
+            long mnow = Motion.Now;
+
+            // 面板自身的补间：入场、密度过渡、分段滑块、按钮按压
+            if (_panel.IsAnimating(mnow, _groups.Sum(g => g.Items.Count + 1)))
+            {
+                moving = true;
+                if (_panel.Compact.IsRunning(mnow)) _layoutDirty = true;
+            }
+
+            if (_revealSnapshot != null) moving = true;
+
+            // 实时点：每次采样后扩散一圈
+            _panel.LivePulse = Math.Clamp((now - _lastTickMs) / LivePulseMs, 0f, 1f);
+            if (_panel.LivePulse < 1f) moving = true;
+
             foreach (var g in _groups)
             {
-                float target = g.Collapsed ? 0f : 1f;
-                float d = target - g.Expand;
-                if (Math.Abs(d) > 0.002f)
-                {
-                    g.Expand += d * (1f - MathF.Exp(-dt / CollapseTauMs));
-                    _layoutDirty = true;
+                // 分组折叠：高度按补间推进，需要重新布局（窗口高度随之变化）
+                float e = g.ExpandTween.Value(mnow);
+                if (g.Expand != e) { g.Expand = e; _layoutDirty = true; }
+                if (g.ExpandTween.IsRunning(mnow) || g.BodyFadeTween.IsRunning(mnow) || g.ChevronTween.IsRunning(mnow) || g.SummaryTween.IsRunning(mnow))
                     moving = true;
-                }
-                else if (g.Expand != target)
-                {
-                    g.Expand = target;
-                    _layoutDirty = true;
-                }
 
                 foreach (var it in g.Items) moving |= it.Animate(dt, speed, t);
             }
@@ -336,6 +356,18 @@ namespace LiteMonitor
                     if (hit != null) break;
                 }
             }
+            // 标题栏按钮与分组标题的悬停（即时，无需动画）
+            string btn = clientPt.HasValue && !_cfg.HorizontalMode ? HitButton(clientPt.Value) : "";
+            GroupLayoutInfo? hoverGroup = null;
+            if (clientPt.HasValue && !_cfg.HorizontalMode && btn == "")
+                hoverGroup = _groups.FirstOrDefault(g => g.HeaderRect.Contains(clientPt.Value));
+            if (btn != _panel.HoverButton || hoverGroup != _panel.HoverGroup)
+            {
+                _panel.HoverButton = btn;
+                _panel.HoverGroup = hoverGroup;
+                _form.Invalidate();
+            }
+
             if (hit == _hoverItem) return;
             if (_hoverItem != null) _hoverItem.HoverTarget = false;
             _hoverItem = hit;
@@ -344,13 +376,42 @@ namespace LiteMonitor
         }
 
         /// <summary>主面板单击（未拖动）：点在分组标题上则折叠或展开该组。返回是否处理。</summary>
+        private string HitButton(Point pt)
+        {
+            if (_panel.PinRect.Contains(pt)) return "pin";
+            if (_panel.MoreRect.Contains(pt)) return "more";
+            if (_panel.ShowSeg && _panel.SegComfyRect.Contains(pt)) return "comfy";
+            if (_panel.ShowSeg && _panel.SegCompactRect.Contains(pt)) return "compact";
+            return "";
+        }
+
         public bool HandleClick(Point clientPt)
         {
             if (_cfg.HorizontalMode) return false;
+
+            switch (HitButton(clientPt))
+            {
+                case "pin":
+                    _cfg.TopMost = !_cfg.TopMost;
+                    _cfg.Save();
+                    LiteMonitor.src.Core.Actions.AppActions.ApplyWindowAttributes(_cfg, MainForm);
+                    MainForm.RebuildMenus();
+                    MainForm.ShowToast(LanguageManager.T(_cfg.TopMost ? "Menu.ToastTopMostOn" : "Menu.ToastTopMostOff"));
+                    _form.Invalidate();
+                    return true;
+                case "more":
+                    MainForm.ContextMenuStrip?.Show(_form, new Point(_panel.MoreRect.Right, _panel.MoreRect.Bottom + 4), ToolStripDropDownDirection.BelowLeft);
+                    return true;
+                case "comfy":
+                case "compact":
+                    SetCompact(HitButton(clientPt) == "compact", toast: false);
+                    return true;
+            }
+
             foreach (var g in _groups)
             {
                 if (!g.HeaderRect.Contains(clientPt)) continue;
-                g.Collapsed = !g.Collapsed;
+                g.SetCollapsed(!g.Collapsed, animate: true);
                 _cfg.CollapsedGroups ??= new List<string>();
                 _cfg.CollapsedGroups.RemoveAll(x => x == g.GroupName);
                 if (g.Collapsed) _cfg.CollapsedGroups.Add(g.GroupName);
@@ -359,6 +420,100 @@ namespace LiteMonitor
                 return true;
             }
             return false;
+        }
+
+        /// <summary>切换舒适 / 紧凑：行高与进度条 .4s 缓出，分段滑块 .5s 弹簧。</summary>
+        public void SetCompact(bool compact, bool toast)
+        {
+            if (_cfg.PanelCompact != compact)
+            {
+                _cfg.PanelCompact = compact;
+                _cfg.Save();
+            }
+            _panel.Compact.Set(compact ? 1f : 0f, 400, Motion.Out);
+            _panel.SegThumb.Set(compact ? 1f : 0f, 500, Motion.Spring);
+            if (toast) MainForm.ShowToast(LanguageManager.T(compact ? "Menu.PanelCompact" : "Menu.PanelComfy"));
+            StartAnim();
+        }
+
+        /// <summary>按下：标题栏按钮缩到 .88，行缩到 .985（.12s）；松开时弹簧回弹。</summary>
+        public void PressDown(Point pt)
+        {
+            if (_cfg.HorizontalMode) return;
+            string b = HitButton(pt);
+            if (b == "pin") _panel.PinPress.Set(1f, 120, Motion.Out);
+            else if (b == "more") _panel.MorePress.Set(1f, 120, Motion.Out);
+            else
+            {
+                var it = HitItem(pt, out _);
+                if (it != null) { _panel.PressedItem = it; _panel.RowPress.Set(1f, 120, Motion.Out); }
+            }
+            StartAnim();
+        }
+
+        public void PressUp()
+        {
+            _panel.PinPress.Set(0f, 380, Motion.Spring);
+            _panel.MorePress.Set(0f, 380, Motion.Spring);
+            _panel.RowPress.Set(0f, 380, Motion.Spring);
+            StartAnim();
+        }
+
+        /// <summary>播放面板入场动效（启动、切换主题、显示主窗口时）。圆形揭开进行中时不叠加。</summary>
+        public void PlayEntrance()
+        {
+            if (RevealRunning(Motion.Now)) return;
+            _panel.BeginEntrance();
+            StartAnim();
+        }
+
+        // ===== 深浅模式切换：圆形揭开（设计稿：.76s，cubic-bezier(.65,0,.35,1)）=====
+        private const float RevealMs = 760;
+        private Bitmap? _revealSnapshot;
+        private PointF _revealOrigin;
+        private long _revealStart = -100000;
+
+        private bool RevealRunning(long now) => _revealSnapshot != null && now - _revealStart < RevealMs;
+
+        /// <summary>在切换主题前调用：先把当前画面存下来，之后新画面从 origin 处以圆形逐渐盖过旧画面。</summary>
+        public void BeginReveal(Point? origin)
+        {
+            if (_cfg.HorizontalMode || _form.ClientSize.Width <= 0 || _form.ClientSize.Height <= 0) return;
+            var size = _form.ClientSize;
+            var snap = new Bitmap(size.Width, size.Height);
+            using (var g = Graphics.FromImage(snap))
+                _panel.Render(g, _groups, ThemeManager.Current, size);
+            _revealSnapshot?.Dispose();
+            _revealSnapshot = snap;
+            var o = origin ?? new Point(size.Width / 2, size.Height / 2);
+            _revealOrigin = new PointF(Math.Clamp(o.X, 0, size.Width), Math.Clamp(o.Y, 0, size.Height));
+            _revealStart = Motion.Now;
+            StartAnim();
+        }
+
+        private void DrawReveal(Graphics g, Size client)
+        {
+            long now = Motion.Now;
+            if (_revealSnapshot == null) return;
+            if (!RevealRunning(now))
+            {
+                _revealSnapshot.Dispose();
+                _revealSnapshot = null;
+                return;
+            }
+            float p = Motion.InOut.Eval(Motion.Progress(_revealStart, 0, RevealMs, now));
+            float maxR = 0;
+            foreach (var c in new[] { new PointF(0, 0), new PointF(client.Width, 0), new PointF(0, client.Height), new PointF(client.Width, client.Height) })
+                maxR = Math.Max(maxR, (float)Math.Sqrt(Math.Pow(c.X - _revealOrigin.X, 2) + Math.Pow(c.Y - _revealOrigin.Y, 2)));
+            float r = maxR * p;
+            using var circle = new System.Drawing.Drawing2D.GraphicsPath();
+            circle.AddEllipse(_revealOrigin.X - r, _revealOrigin.Y - r, r * 2, r * 2);
+            using var outside = new Region(new Rectangle(0, 0, client.Width, client.Height));
+            outside.Exclude(circle);
+            var saved = g.Save();
+            g.SetClip(outside, System.Drawing.Drawing2D.CombineMode.Replace);
+            g.DrawImageUnscaled(_revealSnapshot, 0, 0);
+            g.Restore(saved);
         }
 
         /// <summary>命中竖屏面板中的某一行（折叠中的组不算），并返回它所在分组的显示名。</summary>
@@ -384,6 +539,7 @@ namespace LiteMonitor
         public bool IsOverHeader(Point clientPt)
         {
             if (_cfg.HorizontalMode) return false;
+            if (HitButton(clientPt) != "") return true;
             foreach (var g in _groups) if (g.HeaderRect.Contains(clientPt)) return true;
             return false;
         }
@@ -475,8 +631,7 @@ namespace LiteMonitor
 
         private void ApplyCollapsed(GroupLayoutInfo gr)
         {
-            gr.Collapsed = _cfg.CollapsedGroups?.Contains(gr.GroupName) == true;
-            gr.Expand = gr.Collapsed ? 0f : 1f;
+            gr.SetCollapsed(_cfg.CollapsedGroups?.Contains(gr.GroupName) == true, animate: false);
         }
 
         private void BuildHorizontalColumns()
@@ -652,6 +807,7 @@ namespace LiteMonitor
             _timer.Dispose();
             _animTimer.Stop();
             _animTimer.Dispose();
+            _panel.Dispose();
             _mon.Dispose();
         }
     }

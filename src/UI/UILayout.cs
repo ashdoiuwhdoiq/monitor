@@ -26,6 +26,28 @@ namespace LiteMonitor
         /// <summary>未折叠时的完整区域，用于裁剪折叠过程中的子项。</summary>
         public Rectangle FullBounds { get; set; }
 
+        // 折叠动效（与设计稿一致）：高度 .55s 缓出、内容淡出 .4s、箭头 .5s 回弹旋转、摘要 .5s 滑入
+        public Tween ExpandTween { get; } = new Tween(1f);
+        public Tween BodyFadeTween { get; } = new Tween(1f);
+        public Tween ChevronTween { get; } = new Tween(0f);
+        public Tween SummaryTween { get; } = new Tween(0f);
+
+        public void SetCollapsed(bool collapsed, bool animate)
+        {
+            Collapsed = collapsed;
+            float e = collapsed ? 0f : 1f, c = collapsed ? 1f : 0f;
+            if (!animate)
+            {
+                ExpandTween.Snap(e); BodyFadeTween.Snap(e); ChevronTween.Snap(c); SummaryTween.Snap(c);
+                Expand = e;
+                return;
+            }
+            ExpandTween.Set(e, 550, Motion.Out);
+            BodyFadeTween.Set(e, 400, Motion.Out);
+            ChevronTween.Set(c, 500, Motion.Spring);
+            SummaryTween.Set(c, 500, Motion.Out);
+        }
+
         public GroupLayoutInfo(string name, List<MetricItem> items)
         {
             GroupName = name;

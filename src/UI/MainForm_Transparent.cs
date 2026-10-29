@@ -188,6 +188,7 @@ namespace LiteMonitor
                 {
                     _dragOffset = e.Location;
                     _dragMoved = false;
+                    _ui?.PressDown(e.Location);
                 }
             };
             MouseMove += (_, e) =>
@@ -198,6 +199,7 @@ namespace LiteMonitor
                     {
                         if (Math.Abs(e.X - _dragOffset.X) + Math.Abs(e.Y - _dragOffset.Y) < DragThreshold) return;
                         _dragMoved = true;
+                        _ui?.PressUp();
                         _ui?.SetDragging(true);
                         _uiDragging = true;
                         _bizHelper.IsDragging = true;
@@ -210,10 +212,11 @@ namespace LiteMonitor
                 _ui?.SetHover(e.Location);
                 Cursor = _ui?.IsOverHeader(e.Location) == true ? Cursors.Hand : Cursors.Default;
             };
-            MouseLeave += (_, __) => _ui?.SetHover(null);
+            MouseLeave += (_, __) => { _ui?.SetHover(null); _ui?.PressUp(); };
             MouseUp += (_, e) =>
             {
                 if (e.Button != MouseButtons.Left) return;
+                _ui?.PressUp();
                 if (_dragMoved)
                 {
                     _ui?.SetDragging(false);
@@ -229,6 +232,10 @@ namespace LiteMonitor
                 }
             };
             Move += (_, __) => { if (_dragMoved) _detailCard?.HideCard(); };
+
+            // 界面模式为「跟随系统」时，Windows 切换深浅色后面板以圆形揭开跟着切换
+            Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+            FormClosed += (_, __) => Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
             VisibleChanged += (_, __) => { if (!Visible) _detailCard?.HideCard(); };
 
             // 双击
@@ -240,8 +247,32 @@ namespace LiteMonitor
             this.HandleCreated += (_, __) => _winHelper.RefreshTopMost(_cfg.TopMost, forceReinsert: true);
         }
 
+        private void OnUserPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
+        {
+            if (e.Category != Microsoft.Win32.UserPreferenceCategory.General || _cfg.UIThemeMode != "system") return;
+            if (!IsHandleCreated || IsDisposed) return;
+            BeginInvoke(new Action(() =>
+            {
+                bool wasDark = src.UI.Controls.UIColors.IsDark;
+                src.UI.Controls.UIColors.Apply("system");
+                if (wasDark != src.UI.Controls.UIColors.IsDark)
+                    src.Core.Actions.AppActions.ApplyUIMode(_cfg, _ui, this, null);
+            }));
+        }
+
+        // ==== 提示条（设计稿底部 toast：弹簧上浮、1.7 秒后淡出）====
+        private ToastForm? _toast;
+
+        public void ShowToast(string text)
+        {
+            if (!Visible || string.IsNullOrEmpty(text)) return;
+            if (_toast == null || _toast.IsDisposed) _toast = new ToastForm();
+            _toast.ShowNear(Bounds, text, _cfg.TopMost);
+        }
+
         // ==== 详情卡 ====
         private DetailCardForm? _detailCard;
+        public MetricItem? DetailCardItem => _detailCard?.CurrentItem;
 
         /// <summary>单击某一行：打开它的详情卡；再点同一行或点空白处则收起。</summary>
         private void ToggleDetailCard(Point clientPt)

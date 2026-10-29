@@ -32,6 +32,7 @@ namespace LiteMonitor
         public int PanelWidth { get; set; } = 240;
         public double UIScale { get; set; } = 1.0;
         public List<string> CollapsedGroups { get; set; } = new List<string>(); // 主面板中被折叠的分组
+        public bool PanelCompact { get; set; } = false; // 主面板紧凑密度（隐藏进度条、压低行高）
 
         // ====== 硬件相关 ======
         public string PreferredNetwork { get; set; } = "";

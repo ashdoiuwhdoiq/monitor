@@ -389,9 +389,9 @@ namespace LiteMonitor
                 {
                     cfg.UIThemeMode = mode;
                     cfg.Save();
-                    src.UI.Controls.UIColors.Apply(mode);
-                    src.UI.Controls.GraphiteMenuRenderer.Install();
-                    form.BeginInvoke(new Action(form.RebuildMenus));
+                    // 圆形揭开以菜单点击处为圆心（换算成面板坐标）
+                    var origin = form.PointToClient(Cursor.Position);
+                    AppActions.ApplyUIMode(cfg, ui, form, origin);
                 };
                 uiModeRoot.DropDownItems.Add(item);
             }

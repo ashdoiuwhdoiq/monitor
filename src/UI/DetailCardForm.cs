@@ -13,20 +13,19 @@ namespace LiteMonitor.src.UI
     /// </summary>
     public class DetailCardForm : Form
     {
-        private const float SlideTauMs = 90f;
-        private const int SlideOffset = 24;
+        private const int SlideOffset = 28;
 
         private readonly System.Windows.Forms.Timer _timer = new System.Windows.Forms.Timer { Interval = 15 };
-        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
-        private long _lastMs;
 
         private MetricItem? _item;
         private string _group = "";
         private Settings _cfg;
-        private float _show;          // 0~1 显现程度
+        // 设计稿动效：位移与缩放 .55s 轻弹簧（.34,1.35,.64,1），透明度 .28s，上下跟随所点的行 .55s 缓出
+        private readonly Tween _slide = new Tween(0f);
+        private readonly Tween _fade = new Tween(0f);
+        private readonly Tween _y = new Tween(0f);
         private bool _wantShow;
         private Point _anchor;         // 目标左上角（屏幕坐标）
-        private float _curY = float.NaN;
         private bool _fromRight;       // 卡片在面板右侧时从右往左滑
         private Rectangle _closeRect;
         private bool _closeHover;
@@ -75,11 +74,11 @@ namespace LiteMonitor.src.UI
             int y = Math.Clamp(row.Top - UIUtils.S(40), area.Top + gap, area.Bottom - Height - gap);
             _anchor = new Point(x, y);
 
-            if (!_wantShow || !Visible)
-            {
-                _curY = y;
-                _show = Visible ? _show : 0f;
-            }
+            bool appearing = !_wantShow || !Visible;
+            if (appearing) _y.Snap(y);
+            else _y.Set(y, 550, Motion.Out);           // 已打开时切换到另一行：卡片上下滑到新位置
+            _slide.Set(1f, 550, Motion.SpringSoft);
+            _fade.Set(1f, 280, Motion.Out);
             _wantShow = true;
             if (!Visible) { ApplyPosition(); Show(); ApplyCorners(); }
             Start();
@@ -89,51 +88,40 @@ namespace LiteMonitor.src.UI
         {
             if (!_wantShow) return;
             _wantShow = false;
+            _slide.Set(0f, 300, Motion.Out);
+            _fade.Set(0f, 220, Motion.Out);
             Start();
         }
 
         private void Start()
         {
             _timer.Interval = 15;
-            if (_timer.Enabled) return;
-            _lastMs = _clock.ElapsedMilliseconds;
-            _timer.Start();
+            if (!_timer.Enabled) _timer.Start();
         }
 
         private void Frame()
         {
-            long now = _clock.ElapsedMilliseconds;
-            float dt = Math.Clamp(now - _lastMs, 1, 100);
-            _lastMs = now;
-            float k = 1f - MathF.Exp(-dt / SlideTauMs);
-
-            float target = _wantShow ? 1f : 0f;
-            _show += (target - _show) * k;
-            if (Math.Abs(target - _show) < 0.01f) _show = target;
-            _curY += (_anchor.Y - _curY) * k;
-            if (Math.Abs(_anchor.Y - _curY) < 0.5f) _curY = _anchor.Y;
-
+            long now = Motion.Now;
             ApplyPosition();
             Invalidate(); // 卡片可见期间持续刷新，数值与走势随面板一同变化
 
-            if (_show <= 0f && !_wantShow)
+            if (!_wantShow && !_fade.IsRunning(now) && !_slide.IsRunning(now))
             {
                 _timer.Stop();
-                _timer.Interval = 15;
                 Hide();
                 return;
             }
 
-            // 滑动结束后降到每秒 4 次刷新即可跟上数据变化
-            bool settled = _show == target && _curY == _anchor.Y;
+            // 动效结束后降到每秒 4 次刷新即可跟上数据变化
+            bool settled = !_slide.IsRunning(now) && !_fade.IsRunning(now) && !_y.IsRunning(now);
             _timer.Interval = settled ? 250 : 15;
         }
 
         private void ApplyPosition()
         {
-            int offset = (int)Math.Round((1f - _show) * UIUtils.S(SlideOffset)) * (_fromRight ? -1 : 1);
-            Location = new Point(_anchor.X + offset, (int)Math.Round(float.IsNaN(_curY) ? _anchor.Y : _curY));
-            Opacity = Math.Clamp(_show, 0f, 1f) * Math.Clamp(_cfg.Opacity + 0.1, 0.5, 1.0);
+            int offset = (int)Math.Round((1f - _slide.Value()) * UIUtils.S(SlideOffset)) * (_fromRight ? -1 : 1);
+            Location = new Point(_anchor.X + offset, (int)Math.Round(_y.Value()));
+            Opacity = Math.Clamp(_fade.Value(), 0f, 1f) * Math.Clamp(_cfg.Opacity + 0.1, 0.5, 1.0);
         }
 
         private void ApplyCorners()
@@ -179,6 +167,11 @@ namespace LiteMonitor.src.UI
             g.Clear(bg);
             using (var border = new Pen(Blend(bg, text, 0.12f))) g.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
 
+            // 弹出时内容从 .96 放大到 1（以靠近面板的一侧为原点，带轻微过冲）
+            float sc = 0.96f + 0.04f * _slide.Value();
+            float ox = _fromRight ? 0 : Width, oy = Height / 2f;
+            g.TranslateTransform(ox, oy); g.ScaleTransform(sc, sc); g.TranslateTransform(-ox, -oy);
+
             var it = _item;
             if (it == null) return;
 
@@ -193,7 +186,7 @@ namespace LiteMonitor.src.UI
             // 标题行
             int y = pad - UIUtils.S(2);
             string title = string.IsNullOrEmpty(_group) ? it.Label : $"{_group}  /  {it.Label}";
-            TextRenderer.DrawText(g, title, fLabel, new Rectangle(pad, y, w - UIUtils.S(30), UIUtils.S(24)), text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            GraphitePanel.DrawText(g, title, fLabel, new Rectangle(pad, y, w - UIUtils.S(30), UIUtils.S(24)), text, TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
             _closeRect = new Rectangle(Width - pad - UIUtils.S(24), y, UIUtils.S(24), UIUtils.S(24));
             if (_closeHover) UIUtils.FillRoundRect(g, _closeRect, UIUtils.S(6), Blend(bg, text, 0.10f));
             using (var xp = new Pen(_closeHover ? text : sub, 1.5f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
@@ -208,17 +201,18 @@ namespace LiteMonitor.src.UI
             it.GetFormattedText(false);
             string valText = it.CachedValueText, unitText = it.CachedUnitText;
             Color valColor = it.GetTextColor(t);
-            var bigSize = TextRenderer.MeasureText(g, valText, fBig, Size.Empty, TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(g, valText, fBig, new Point(pad, y), valColor, TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(g, unitText, fUnit, new Rectangle(pad + bigSize.Width + UIUtils.S(4), y, UIUtils.S(80), bigSize.Height - UIUtils.S(4)), sub, TextFormatFlags.Left | TextFormatFlags.Bottom | TextFormatFlags.NoPadding);
+            var bigSize = new Size(GraphitePanel.MeasureW(g, valText, fBig), (int)Math.Ceiling(fBig.GetHeight(g)));
+            GraphitePanel.DrawText(g, valText, fBig, new Rectangle(pad, y, w, bigSize.Height), valColor, TextFormatFlags.Left);
+            int unitH = (int)Math.Ceiling(fUnit.GetHeight(g));
+            GraphitePanel.DrawText(g, unitText, fUnit, new Rectangle(pad + bigSize.Width + UIUtils.S(4), y + bigSize.Height - unitH - UIUtils.S(5), UIUtils.S(80), unitH), sub, TextFormatFlags.Left);
 
             int state = it.CachedColorState;
             string stateText = LanguageManager.T(state == 2 ? "Menu.DetailCritical" : state == 1 ? "Menu.DetailHigh" : "Menu.DetailNormal");
             Color stateColor = it.GetBarColor(t);
-            var chipSize = TextRenderer.MeasureText(stateText, fSmall);
+            var chipSize = new Size(GraphitePanel.MeasureW(g, stateText, fSmall), 0);
             var chip = new Rectangle(Width - pad - chipSize.Width - UIUtils.S(16), y + bigSize.Height - UIUtils.S(28), chipSize.Width + UIUtils.S(16), UIUtils.S(22));
             UIUtils.FillRoundRect(g, chip, chip.Height / 2, Color.FromArgb(40, stateColor));
-            TextRenderer.DrawText(g, stateText, fSmall, chip, Blend(stateColor, text, 0.15f), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            GraphitePanel.DrawText(g, stateText, fSmall, chip, Blend(stateColor, text, 0.15f), TextFormatFlags.HorizontalCenter);
 
             // 走势图
             y += bigSize.Height + UIUtils.S(14);
@@ -273,8 +267,8 @@ namespace LiteMonitor.src.UI
 
             int seconds = Math.Max(1, (int)Math.Round(40 * Math.Max(80, _cfg.RefreshMs) / 1000.0));
             y = chart.Bottom + UIUtils.S(4);
-            TextRenderer.DrawText(g, string.Format(LanguageManager.T("Menu.DetailAgo"), seconds), fSmall, new Rectangle(pad, y, w / 2, UIUtils.S(18)), sub, TextFormatFlags.Left);
-            TextRenderer.DrawText(g, LanguageManager.T("Menu.DetailNow"), fSmall, new Rectangle(pad + w / 2, y, w / 2, UIUtils.S(18)), sub, TextFormatFlags.Right);
+            GraphitePanel.DrawText(g, string.Format(LanguageManager.T("Menu.DetailAgo"), seconds), fSmall, new Rectangle(pad, y, w / 2, UIUtils.S(18)), sub, TextFormatFlags.Left);
+            GraphitePanel.DrawText(g, LanguageManager.T("Menu.DetailNow"), fSmall, new Rectangle(pad + w / 2, y, w / 2, UIUtils.S(18)), sub, TextFormatFlags.Right);
 
             // 最低 / 平均 / 最高
             y += UIUtils.S(24);
@@ -288,9 +282,9 @@ namespace LiteMonitor.src.UI
             {
                 var box = new Rectangle(pad + i * (cw + gapX), y, cw, UIUtils.S(52));
                 UIUtils.FillRoundRect(g, box, UIUtils.S(10), panelBg == bg ? Blend(bg, text, 0.05f) : panelBg);
-                TextRenderer.DrawText(g, labels[i], fSmall, new Rectangle(box.X + UIUtils.S(10), box.Y + UIUtils.S(6), box.Width - UIUtils.S(12), UIUtils.S(18)), sub, TextFormatFlags.Left);
+                GraphitePanel.DrawText(g, labels[i], fSmall, new Rectangle(box.X + UIUtils.S(10), box.Y + UIUtils.S(6), box.Width - UIUtils.S(12), UIUtils.S(18)), sub, TextFormatFlags.Left);
                 string sv = n > 0 ? FormatValue(it, vals[i]) : "—";
-                TextRenderer.DrawText(g, sv, fStat, new Rectangle(box.X + UIUtils.S(10), box.Y + UIUtils.S(24), box.Width - UIUtils.S(12), UIUtils.S(22)), text, TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+                GraphitePanel.DrawText(g, sv, fStat, new Rectangle(box.X + UIUtils.S(10), box.Y + UIUtils.S(24), box.Width - UIUtils.S(12), UIUtils.S(22)), text, TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
             }
         }
 
