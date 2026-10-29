@@ -155,6 +155,17 @@ namespace LiteMonitor.src.UI
 
         protected override void OnPaint(PaintEventArgs e)
         {
+            // 详情卡是附加功能：绘制出错只收起卡片，绝不让整个程序弹出崩溃
+            try { PaintCard(e); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[DetailCardForm] 绘制失败: {ex.Message}");
+                BeginInvoke(new Action(HideCard));
+            }
+        }
+
+        private void PaintCard(PaintEventArgs e)
+        {
             var t = ThemeManager.Current;
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;

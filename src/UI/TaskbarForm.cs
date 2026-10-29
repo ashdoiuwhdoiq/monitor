@@ -116,18 +116,27 @@ namespace LiteMonitor
             }
 
             using var bmp = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            using (var g = Graphics.FromImage(bmp))
+            bool rendered;
+            try
             {
+                using var g = Graphics.FromImage(bmp);
                 // Alpha=1 的底色肉眼不可见，但让整条区域都能接收鼠标（悬停浮窗、右键菜单）
                 g.Clear(Color.FromArgb(1, 0, 0, 0));
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                 g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
                 if (_cols != null) TaskbarRenderer.Render(g, _cols, _bizHelper.LastIsLightTheme, alphaText: true);
+                rendered = true;
+            }
+            catch (Exception ex)
+            {
+                // 新绘制方式出任何问题都不能让程序崩溃：记一笔，然后退回原来的方式
+                System.Diagnostics.Debug.WriteLine($"[TaskbarForm] 逐像素绘制失败，退回颜色键: {ex.Message}");
+                rendered = false;
             }
 
-            if (_winHelper.UpdateLayered(bmp)) return;
+            if (rendered && _winHelper.UpdateLayered(bmp)) return;
 
-            if (!_layeredResetTried)
+            if (rendered && !_layeredResetTried)
             {
                 _layeredResetTried = true;
                 _winHelper.ResetLayeredState();

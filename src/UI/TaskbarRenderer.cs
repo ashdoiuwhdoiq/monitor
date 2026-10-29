@@ -35,15 +35,19 @@ namespace LiteMonitor
         {     
             var s = cfg.GetStyle();
 
-            // ★★★ 修复：先释放旧字体资源，防止 GDI 句柄泄漏 ★★★
-            if (_cachedFont != null)
+            // 任务栏字体由本类独占：不能取 UIUtils 的共享缓存，
+            // 否则 UIUtils.ClearBrushCache()（重建菜单、切换主题时都会调用）会把它释放掉，
+            // 之后 GDI+ 的 DrawString 用到已释放的字体就会抛出 "Parameter is not valid."
+            var old = _cachedFont;
+            try
             {
-                try { _cachedFont.Dispose(); } catch { }
-                _cachedFont = null;
+                _cachedFont = new Font(s.Font, s.Size, s.Bold ? FontStyle.Bold : FontStyle.Regular);
             }
-
-            // 无论开关怎么变，这里拿到的永远是正确参数
-            _cachedFont = UIUtils.GetFont(s.Font, s.Size, s.Bold);
+            catch
+            {
+                _cachedFont = new Font(SystemFonts.DefaultFont.FontFamily, s.Size, s.Bold ? FontStyle.Bold : FontStyle.Regular);
+            }
+            try { old?.Dispose(); } catch { }
 
             // 颜色依然允许自定义
             _useCustom = cfg.TaskbarCustomStyle;
