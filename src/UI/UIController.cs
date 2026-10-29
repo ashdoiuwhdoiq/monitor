@@ -465,7 +465,8 @@ namespace LiteMonitor
             int diskThreshold = Math.Min(globalThreshold - 20, 60); 
 
             List<string> alertLines = new List<string>();
-            string alertTitle = LanguageManager.T("Menu.AlertTemp"); 
+            List<string> alertKeys = new List<string>();
+            string alertTitle = LanguageManager.T("Menu.AlertTemp");
 
             void Check(string key, float? val, int threshold, string label, string msgSuffix = "")
             {
@@ -477,6 +478,7 @@ namespace LiteMonitor
                     if ((DateTime.Now - _overheatStartTimes[key]).TotalSeconds >= 5)
                     {
                         alertLines.Add($"{label} {alertTitle}: 🔥{val:F0}°C{msgSuffix}");
+                        alertKeys.Add(key);
                     }
                 }
                 else
@@ -493,7 +495,8 @@ namespace LiteMonitor
 
             if (alertLines.Count > 0)
             {
-                string thresholdText = (alertLines.Count == 1 && alertLines[0].StartsWith("DISK")) 
+                // 按监控键判断而非本地化后的标签，中文等语言下也能正确显示磁盘阈值
+                string thresholdText = (alertKeys.Count == 1 && alertKeys[0] == "DISK.Temp")
                     ? $"(>{diskThreshold}°C)" 
                     : $"(>{globalThreshold}°C)";
 

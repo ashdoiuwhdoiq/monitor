@@ -147,7 +147,7 @@ namespace LiteMonitor.src.Core
         {
             if (state == MetricUtils.STATE_CRIT) return ThemeManager.ParseColor(isValueText ? t.Color.ValueCrit : t.Color.BarHigh);
             if (state == MetricUtils.STATE_WARN) return ThemeManager.ParseColor(isValueText ? t.Color.ValueWarn : t.Color.BarMid);
-            return ThemeManager.ParseColor(t.Color.ValueSafe);
+            return ThemeManager.ParseColor(isValueText ? t.Color.ValueSafe : t.Color.BarLow);
         }
 
         // ============================================================
