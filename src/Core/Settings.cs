@@ -9,6 +9,9 @@ namespace LiteMonitor
 {
     public class Settings
     {
+        // 读到但当前版本不认识的字段原样保留并写回，新旧版本来回切换时不丢配置
+        [JsonExtensionData] public Dictionary<string, System.Text.Json.JsonElement>? ExtraFields { get; set; }
+
         // ====== 基础设置 ======
         public string Skin { get; set; } = "DarkFlat_Classic";
         public bool TopMost { get; set; } = true;

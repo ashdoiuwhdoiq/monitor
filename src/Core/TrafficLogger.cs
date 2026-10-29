@@ -23,9 +23,7 @@ namespace LiteMonitor.src.Core
     // === 管理器 (静态单例) ===
     public static class TrafficLogger
     {
-        private static readonly string _filePath = Path.Combine(AppContext.BaseDirectory, "TrafficHistory.json");
-        private static readonly string _backupPath = Path.Combine(AppContext.BaseDirectory, "TrafficHistory.json.bak");
-        private static readonly string _tempPath = Path.Combine(AppContext.BaseDirectory, "TrafficHistory.json.tmp");
+        private static readonly SafeJsonFile _store = new SafeJsonFile("TrafficHistory.json");
         private static readonly object _ioLock = new object(); // 文件锁
         private static readonly object _dataLock = new object(); // 数据锁
         // ====== 新增缓存字段 ======
@@ -39,28 +37,12 @@ namespace LiteMonitor.src.Core
         {
             lock (_ioLock)
             {
-                TrafficData loaded = TryLoadFile(_filePath) ?? TryLoadFile(_backupPath) ?? new TrafficData();
+                TrafficData loaded = _store.Load<TrafficData>() ?? new TrafficData();
                 loaded.History ??= new Dictionary<string, DailyRecord>();
                 lock (_dataLock)
                 {
                     Data = loaded;
                 }
-            }
-        }
-
-        private static TrafficData? TryLoadFile(string path)
-        {
-            try
-            {
-                if (!File.Exists(path)) return null;
-
-                string json = File.ReadAllText(path);
-                return JsonSerializer.Deserialize<TrafficData>(json) ?? new TrafficData();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[TrafficLogger] 读取历史流量失败: {path}, {ex.Message}");
-                return null;
             }
         }
 
@@ -77,35 +59,6 @@ namespace LiteMonitor.src.Core
                         Download = kv.Value?.Download ?? 0
                     })
             };
-        }
-
-        private static void AtomicWrite(string json)
-        {
-            string? dir = Path.GetDirectoryName(_filePath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-
-            File.WriteAllText(_tempPath, json);
-
-            if (File.Exists(_filePath))
-            {
-                try { File.Copy(_filePath, _backupPath, true); }
-                catch (Exception ex) { Debug.WriteLine($"[TrafficLogger] 写入备份失败: {ex.Message}"); }
-            }
-
-            File.Move(_tempPath, _filePath, true);
-        }
-
-        private static void CleanupTempFile()
-        {
-            try
-            {
-                if (File.Exists(_tempPath)) File.Delete(_tempPath);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[TrafficLogger] 清理临时文件失败: {ex.Message}");
-            }
         }
 
         private static string SerializeSnapshot()
@@ -145,12 +98,12 @@ namespace LiteMonitor.src.Core
                 try
                 {
                     string json = SerializeSnapshot();
-                    AtomicWrite(json);
+                    _store.Write(json);
                 }
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"[TrafficLogger] 保存历史流量失败: {ex.Message}");
-                    CleanupTempFile();
+                    _store.CleanupTemp();
                 }
             }
         }

@@ -35,9 +35,7 @@ namespace LiteMonitor.src.Core
         public static readonly string[] PowerKeys = { "CPU.Power", "GPU.Power", "BAT.Power" };
         public static readonly string[] FpsKeys = { "FPS" };
 
-        private static readonly string _filePath = Path.Combine(AppContext.BaseDirectory, "HardwareHistory.json");
-        private static readonly string _backupPath = Path.Combine(AppContext.BaseDirectory, "HardwareHistory.json.bak");
-        private static readonly string _tempPath = Path.Combine(AppContext.BaseDirectory, "HardwareHistory.json.tmp");
+        private static readonly SafeJsonFile _store = new SafeJsonFile("HardwareHistory.json");
         private static readonly object _dataLock = new object();
         private static readonly object _ioLock = new object();
         private static readonly TimeSpan _sampleInterval = TimeSpan.FromSeconds(10);
@@ -62,7 +60,7 @@ namespace LiteMonitor.src.Core
         {
             lock (_ioLock)
             {
-                var loaded = TryLoadFile(_filePath) ?? TryLoadFile(_backupPath) ?? new HardwareHistoryData();
+                var loaded = _store.Load<HardwareHistoryData>() ?? new HardwareHistoryData();
                 loaded.Points ??= new List<HardwareHistoryPoint>();
                 foreach (var point in loaded.Points)
                 {
@@ -176,12 +174,12 @@ namespace LiteMonitor.src.Core
                 try
                 {
                     string json = JsonSerializer.Serialize(snapshot);
-                    AtomicWrite(json);
+                    _store.Write(json);
                 }
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"[HardwareHistoryLogger] 保存硬件趋势失败: {ex.Message}");
-                    CleanupTempFile();
+                    _store.CleanupTemp();
                 }
             }
         }
@@ -213,21 +211,6 @@ namespace LiteMonitor.src.Core
                 MetricType.FPS => v >= 0 && v <= 1000,
                 _ => false
             };
-        }
-
-        private static HardwareHistoryData? TryLoadFile(string path)
-        {
-            try
-            {
-                if (!File.Exists(path)) return null;
-                string json = File.ReadAllText(path);
-                return JsonSerializer.Deserialize<HardwareHistoryData>(json);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[HardwareHistoryLogger] 读取硬件趋势失败: {path}, {ex.Message}");
-                return null;
-            }
         }
 
         private static void FlushCurrentBucketUnsafe()
@@ -302,35 +285,6 @@ namespace LiteMonitor.src.Core
                     lock (_ioLock) _saveRunning = false;
                 }
             });
-        }
-
-        private static void AtomicWrite(string json)
-        {
-            string? dir = Path.GetDirectoryName(_filePath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-
-            File.WriteAllText(_tempPath, json);
-
-            if (File.Exists(_filePath))
-            {
-                try { File.Copy(_filePath, _backupPath, true); }
-                catch (Exception ex) { Debug.WriteLine($"[HardwareHistoryLogger] 写入备份失败: {ex.Message}"); }
-            }
-
-            File.Move(_tempPath, _filePath, true);
-        }
-
-        private static void CleanupTempFile()
-        {
-            try
-            {
-                if (File.Exists(_tempPath)) File.Delete(_tempPath);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[HardwareHistoryLogger] 清理临时文件失败: {ex.Message}");
-            }
         }
 
         private static DateTime FloorMinute(DateTime time)

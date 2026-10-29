@@ -11,11 +11,10 @@ namespace LiteMonitor
     public static class SettingsHelper
     {
         // Cache path
-        private static readonly string _cachedPath = Path.Combine(AppContext.BaseDirectory, "settings.json");
-        private static readonly string _backupPath = Path.Combine(AppContext.BaseDirectory, "settings.json.bak");
-        private static readonly string _tempPath = Path.Combine(AppContext.BaseDirectory, "settings.json.tmp");
+        private static readonly SafeJsonFile _store = new SafeJsonFile("settings.json");
+        private static readonly JsonSerializerOptions _readOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         private static readonly object _ioLock = new object();
-        public static string FilePath => _cachedPath;
+        public static string FilePath => _store.FilePath;
 
         // Global block save lock
         public static bool GlobalBlockSave { get; set; } = false;
@@ -28,7 +27,7 @@ namespace LiteMonitor
             Settings s;
             lock (_ioLock)
             {
-                s = TryLoadFile(FilePath) ?? TryLoadFile(_backupPath) ?? new Settings();
+                s = _store.Load<Settings>(_readOptions) ?? new Settings();
             }
 
             if (s.GroupAliases == null) s.GroupAliases = new Dictionary<string, string>();
@@ -85,12 +84,12 @@ namespace LiteMonitor
                 var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
                 lock (_ioLock)
                 {
-                    AtomicWrite(json);
+                    _store.Write(json);
                 }
             }
             catch
             {
-                CleanupTempFile();
+                _store.CleanupTemp();
             }
         }
 
@@ -98,54 +97,10 @@ namespace LiteMonitor
         {
             lock (_ioLock)
             {
-                DeleteFileIfExists(FilePath);
-                DeleteFileIfExists(_backupPath);
-                DeleteFileIfExists(_tempPath);
+                DeleteFileIfExists(_store.FilePath);
+                DeleteFileIfExists(_store.BackupPath);
+                DeleteFileIfExists(_store.TempPath);
             }
-        }
-
-        private static Settings? TryLoadFile(string path)
-        {
-            try
-            {
-                if (!File.Exists(path)) return null;
-
-                var json = File.ReadAllText(path);
-                return JsonSerializer.Deserialize<Settings>(json, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static void AtomicWrite(string json)
-        {
-            string? dir = Path.GetDirectoryName(FilePath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-
-            File.WriteAllText(_tempPath, json);
-
-            if (File.Exists(FilePath))
-            {
-                try { File.Copy(FilePath, _backupPath, true); }
-                catch { }
-            }
-
-            File.Move(_tempPath, FilePath, true);
-        }
-
-        private static void CleanupTempFile()
-        {
-            try
-            {
-                if (File.Exists(_tempPath)) File.Delete(_tempPath);
-            }
-            catch { }
         }
 
         private static void DeleteFileIfExists(string path)
