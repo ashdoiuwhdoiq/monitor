@@ -15,34 +15,43 @@ namespace LiteMonitor.src.Core.Actions
         /// 使用反射将草稿设置 (Draft) 合并到实时设置 (Live) 中。
         /// 保留在黑名单中定义的仅运行时属性。
         /// </summary>
+        // 不应被草稿覆盖的属性黑名单 (运行时数据)
+        // 这些值由后台逻辑自动更新。如果不在黑名单中，当你打开设置窗口时（Draft 状态）它们可能已经发生了变化
+        private static readonly HashSet<string> RuntimeProps = new HashSet<string>
+        {
+            // 其他运行时状态
+            "LastAutoNetwork", "LastAutoDisk",
+            "ScreenDevice", "MaxLimitTipShown",
+
+            // 流量统计 (累加值)
+            "TotalUpload", "TotalDownload",
+            "SessionUploadBytes", "SessionDownloadBytes",
+
+            // 时间戳
+            "LastAutoSaveTime", "LastAlertTime",
+
+            // 主面板上直接点出来的折叠状态，设置窗口打开期间也可能变化
+            "CollapsedGroups",
+
+            // 程序运行中不在设置窗口里修改的窗口位置等
+            "Position", "ExtraFields"
+        };
+
+        /// <summary>是否为后台自动维护、不应被设置窗口草稿覆盖的属性（含历史最大值记录 RecordedMax*）。</summary>
+        public static bool IsRuntimeProp(string name) =>
+            RuntimeProps.Contains(name) || name.StartsWith("RecordedMax", StringComparison.Ordinal);
+
         public static void Merge(Settings live, Settings draft)
         {
             if (live == null || draft == null) return;
-
-            // 不应被草稿覆盖的属性黑名单 (运行时数据)
-            //这些值由后台逻辑自动更新。如果不在黑名单中，当你打开设置窗口时（Draft 状态）它们可能已经发生了变化
-            var runtimeProps = new HashSet<string>
-            {
-                
-                // 其他运行时状态
-                "LastAutoNetwork", "LastAutoDisk",
-                "ScreenDevice", "MaxLimitTipShown",
-                
-                // 流量统计 (累加值)
-                "TotalUpload", "TotalDownload",
-                "SessionUploadBytes", "SessionDownloadBytes",
-                
-                // 时间戳
-                "LastAutoSaveTime", "LastAlertTime"
-            };
 
             var props = typeof(Settings).GetProperties(BindingFlags.Public | BindingFlags.Instance);
             foreach (var p in props)
             {
                 if (!p.CanWrite || !p.CanRead) continue;
-                
+
                 // 1. 跳过黑名单中的运行时属性
-                if (runtimeProps.Contains(p.Name)) continue;
+                if (IsRuntimeProp(p.Name)) continue;
                 
                 // 2. 特殊处理集合类型
                 if (p.Name == "MonitorItems")

@@ -148,6 +148,8 @@
     "DetailNow": "Now",
     "DetailClose": "Close",
     "TaskbarPerPixelAlpha": "Smooth text edges (per-pixel transparency)",
+    "UnsavedChanges": "Unsaved changes",
+    "SettingsApplied": "Settings applied",
     "DisplayMode": "Display Mode",
     "Vertical": "Panel",
     "Horizontal": "Bar",

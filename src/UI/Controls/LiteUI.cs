@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 using LiteMonitor.src.Core; // 确保引用了 UIUtils
 using LiteMonitor.src.UI.SettingsPage;
@@ -690,7 +691,155 @@ namespace LiteMonitor.src.UI.Controls
             }
         }
     }
-    public class LiteNavBtn : Button { private bool _isActive; private readonly Font _fontRegular = new Font("Microsoft YaHei UI", 10F); private readonly Font _fontBold = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold); public bool IsActive { get => _isActive; set { _isActive = value; Invalidate(); } } public LiteNavBtn(string text) { Text = "  " + text; Size = new Size(UIUtils.S(150), UIUtils.S(40)); FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; TextAlign = ContentAlignment.MiddleLeft; Font = _fontRegular; Cursor = Cursors.Hand; Margin = UIUtils.S(new Padding(5, 2, 5, 2)); BackColor = UIColors.SidebarBg; ForeColor = UIColors.TextMain; } protected override void OnPaint(PaintEventArgs e) { Color bg = _isActive ? UIColors.NavSelected : (ClientRectangle.Contains(PointToClient(Cursor.Position)) ? UIColors.NavHover : UIColors.SidebarBg); using (var b = new SolidBrush(bg)) e.Graphics.FillRectangle(b, ClientRectangle); if (_isActive) { using (var b = new SolidBrush(UIColors.Primary)) e.Graphics.FillRectangle(b, 0, UIUtils.S(8), UIUtils.S(3), Height - UIUtils.S(16)); } TextRenderer.DrawText(e.Graphics, Text, _isActive ? _fontBold : _fontRegular, new Point(UIUtils.S(12), UIUtils.S(9)), UIColors.TextMain); } protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); Invalidate(); } protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); Invalidate(); } protected override void Dispose(bool disposing) { if (disposing) { _fontRegular.Dispose(); _fontBold.Dispose(); } base.Dispose(disposing); } }
+    /// <summary>
+    /// 侧栏导航按钮：背景透明，选中底色由 NavRail 统一绘制并滑动；左侧是线条图标。
+    /// </summary>
+    public class LiteNavBtn : Button
+    {
+        private bool _isActive;
+        private readonly string _icon;
+        private readonly Font _fontRegular = new Font("Microsoft YaHei UI", 10F);
+        private readonly Font _fontBold = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
+
+        public bool IsActive { get => _isActive; set { _isActive = value; Invalidate(); } }
+
+        public LiteNavBtn(string text, string icon = "")
+        {
+            _icon = icon;
+            Text = text;
+            Size = new Size(UIUtils.S(150), UIUtils.S(40));
+            FlatStyle = FlatStyle.Flat;
+            FlatAppearance.BorderSize = 0;
+            FlatAppearance.MouseOverBackColor = Color.Transparent;
+            FlatAppearance.MouseDownBackColor = Color.Transparent;
+            TextAlign = ContentAlignment.MiddleLeft;
+            Font = _fontRegular;
+            Cursor = Cursors.Hand;
+            Margin = UIUtils.S(new Padding(5, 2, 5, 2));
+            BackColor = Color.Transparent;
+            ForeColor = UIColors.TextMain;
+            SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            bool hover = !_isActive && ClientRectangle.Contains(PointToClient(Cursor.Position));
+            if (hover) UIUtils.FillRoundRect(g, ClientRectangle, UIUtils.S(8), UIColors.NavHover);
+
+            Color fg = _isActive ? UIColors.TextMain : UIColors.TextSub;
+            int iconSize = UIUtils.S(16);
+            var iconRect = new Rectangle(UIUtils.S(14), (Height - iconSize) / 2, iconSize, iconSize);
+            DrawIcon(g, _icon, iconRect, _isActive ? UIColors.Primary : fg);
+            var textRect = new Rectangle(iconRect.Right + UIUtils.S(10), 0, Width - iconRect.Right - UIUtils.S(12), Height);
+            TextRenderer.DrawText(g, Text, _isActive ? _fontBold : _fontRegular, textRect, fg,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        }
+
+        /// <summary>简单的线条图标，跟随文字颜色，替代 emoji（emoji 在不同系统上的样式不一致）。</summary>
+        private static void DrawIcon(Graphics g, string kind, Rectangle r, Color c)
+        {
+            using var p = new Pen(c, Math.Max(1.4f, UIUtils.S(1.6f))) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+            float x = r.X, y = r.Y, w = r.Width;
+            RectangleF R(float a, float b, float cw, float ch) => new RectangleF(x + w * a, y + w * b, w * cw, w * ch);
+            switch (kind)
+            {
+                case "panel": // 显示器
+                    g.DrawRectangle(p, Rectangle.Round(R(0.06f, 0.12f, 0.88f, 0.6f)));
+                    g.DrawLine(p, x + w * 0.35f, y + w * 0.9f, x + w * 0.65f, y + w * 0.9f);
+                    g.DrawLine(p, x + w * 0.5f, y + w * 0.72f, x + w * 0.5f, y + w * 0.9f);
+                    break;
+                case "taskbar": // 底部条
+                    g.DrawRectangle(p, Rectangle.Round(R(0.06f, 0.62f, 0.88f, 0.26f)));
+                    g.DrawLine(p, x + w * 0.62f, y + w * 0.75f, x + w * 0.82f, y + w * 0.75f);
+                    break;
+                case "monitor": // 柱状
+                    g.DrawLine(p, x + w * 0.2f, y + w * 0.9f, x + w * 0.2f, y + w * 0.5f);
+                    g.DrawLine(p, x + w * 0.5f, y + w * 0.9f, x + w * 0.5f, y + w * 0.15f);
+                    g.DrawLine(p, x + w * 0.8f, y + w * 0.9f, x + w * 0.8f, y + w * 0.38f);
+                    break;
+                case "threshold": // 警示三角
+                    g.DrawPolygon(p, new[] { new PointF(x + w * 0.5f, y + w * 0.1f), new PointF(x + w * 0.94f, y + w * 0.88f), new PointF(x + w * 0.06f, y + w * 0.88f) });
+                    g.DrawLine(p, x + w * 0.5f, y + w * 0.4f, x + w * 0.5f, y + w * 0.6f);
+                    g.DrawLine(p, x + w * 0.5f, y + w * 0.74f, x + w * 0.5f, y + w * 0.75f);
+                    break;
+                case "system": // 芯片
+                    g.DrawRectangle(p, Rectangle.Round(R(0.22f, 0.22f, 0.56f, 0.56f)));
+                    foreach (float t in new[] { 0.38f, 0.62f })
+                    {
+                        g.DrawLine(p, x + w * t, y + w * 0.06f, x + w * t, y + w * 0.22f);
+                        g.DrawLine(p, x + w * t, y + w * 0.78f, x + w * t, y + w * 0.94f);
+                        g.DrawLine(p, x + w * 0.06f, y + w * t, x + w * 0.22f, y + w * t);
+                        g.DrawLine(p, x + w * 0.78f, y + w * t, x + w * 0.94f, y + w * t);
+                    }
+                    break;
+                case "plugins": // 四宫格
+                    g.DrawRectangle(p, Rectangle.Round(R(0.1f, 0.1f, 0.34f, 0.34f)));
+                    g.DrawRectangle(p, Rectangle.Round(R(0.56f, 0.1f, 0.34f, 0.34f)));
+                    g.DrawRectangle(p, Rectangle.Round(R(0.1f, 0.56f, 0.34f, 0.34f)));
+                    g.DrawRectangle(p, Rectangle.Round(R(0.56f, 0.56f, 0.34f, 0.34f)));
+                    break;
+            }
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); Invalidate(); }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); Invalidate(); }
+        protected override void Dispose(bool disposing) { if (disposing) { _fontRegular.Dispose(); _fontBold.Dispose(); } base.Dispose(disposing); }
+    }
+
+    /// <summary>
+    /// 侧栏容器：在按钮下方画选中底色和强调竖条，切换页面时以缓动滑到新位置。
+    /// </summary>
+    public class NavRail : FlowLayoutPanel
+    {
+        private readonly System.Windows.Forms.Timer _timer = new System.Windows.Forms.Timer { Interval = 15 };
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        private long _last;
+        private float _y = float.NaN, _targetY;
+        private Rectangle _slot;
+
+        public NavRail()
+        {
+            DoubleBuffered = true;
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            _timer.Tick += (_, __) =>
+            {
+                long now = _clock.ElapsedMilliseconds;
+                float dt = Math.Clamp(now - _last, 1, 100);
+                _last = now;
+                _y += (_targetY - _y) * (1f - MathF.Exp(-dt / 65f));
+                if (Math.Abs(_targetY - _y) < 0.5f) { _y = _targetY; _timer.Stop(); }
+                Invalidate(true);
+            };
+        }
+
+        public void MoveTo(Control c)
+        {
+            _slot = new Rectangle(c.Left, c.Top, c.Width, c.Height);
+            _targetY = c.Top;
+            if (float.IsNaN(_y)) { _y = _targetY; Invalidate(true); return; }
+            _last = _clock.ElapsedMilliseconds;
+            _timer.Start();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            if (float.IsNaN(_y) || _slot.Width <= 0) return;
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var r = new Rectangle(_slot.X, (int)Math.Round(_y), _slot.Width, _slot.Height);
+            UIUtils.FillRoundRect(g, r, UIUtils.S(8), UIColors.NavSelected);
+            UIUtils.FillRoundRect(g, new Rectangle(r.X, r.Y + UIUtils.S(10), UIUtils.S(3), r.Height - UIUtils.S(20)), UIUtils.S(2), UIColors.Primary);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _timer.Dispose();
+            base.Dispose(disposing);
+        }
+    }
     public class LiteSortBtn : Button { public LiteSortBtn(string txt) { Text = txt; Size = new Size(UIUtils.S(24), UIUtils.S(24)); FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; BackColor = UIColors.ChipBg; ForeColor = UIColors.TextSub; Cursor = Cursors.Hand; Font = new Font("Microsoft YaHei UI", 7F, FontStyle.Bold); Margin = new Padding(0); } }
     
     // ★★★ New: Header Button (Variable Width) ★★★

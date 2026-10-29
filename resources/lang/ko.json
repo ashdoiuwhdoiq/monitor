@@ -148,6 +148,8 @@
     "DetailNow": "현재",
     "DetailClose": "닫기",
     "TaskbarPerPixelAlpha": "글자 가장자리 부드럽게(픽셀 단위 투명)",
+    "UnsavedChanges": "저장되지 않은 변경 사항",
+    "SettingsApplied": "설정이 적용되었습니다",
     "DisplayMode": "표시 모드",
     "Vertical": "패널형",
     "Horizontal": "바형",

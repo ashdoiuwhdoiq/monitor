@@ -16,7 +16,13 @@ namespace LiteMonitor.src.UI
         private UIController _ui;
         private MainForm _mainForm;
         
-        private FlowLayoutPanel _pnlNavContainer; 
+        private NavRail _pnlNavContainer;
+
+        // 未保存提示：与打开窗口（或上次应用）时的草稿快照比较
+        private string _baseline = "";
+        private Label _lblDirty = null!;
+        private readonly System.Windows.Forms.Timer _dirtyTimer = new System.Windows.Forms.Timer { Interval = 400 };
+        private DateTime _appliedUntil = DateTime.MinValue;
         private BufferedPanel _pnlContent; // 使用现有的 BufferedPanel
         
         // 缓存所有页面实例
@@ -81,8 +87,8 @@ namespace LiteMonitor.src.UI
             // 侧边栏
             var pnlSidebar = new Panel { Dock = DockStyle.Left, Width = UIUtils.S(160), BackColor = UIColors.SidebarBg };
             
-            _pnlNavContainer = new FlowLayoutPanel 
-            { 
+            _pnlNavContainer = new NavRail
+            {
                 Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, 
                 Padding = UIUtils.S(new Padding(0, 20, 0, 0)), BackColor = UIColors.SidebarBg
             };
@@ -128,6 +134,18 @@ namespace LiteMonitor.src.UI
 
             flowBtns.Controls.Add(btnOk); flowBtns.Controls.Add(btnCancel); flowBtns.Controls.Add(btnApply); flowBtns.Controls.Add(btnReset);
             pnlBottom.Controls.Add(flowBtns);
+
+            // 左侧状态：有未保存更改时出现，应用后短暂显示「已应用」
+            _lblDirty = new Label
+            {
+                AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
+                Padding = UIUtils.S(new Padding(20, 0, 0, 0)), ForeColor = UIColors.TextWarn,
+                Font = new Font("Microsoft YaHei UI", 9F), BackColor = Color.Transparent, Text = ""
+            };
+            pnlBottom.Controls.Add(_lblDirty);
+            _lblDirty.BringToFront(); // Fill 需在 Z 序最前，才会在右侧按钮区之后占用剩余空间
+            _dirtyTimer.Tick += (s, e) => UpdateDirtyState();
+            this.FormClosed += (s, e) => _dirtyTimer.Dispose();
             this.Controls.Add(pnlBottom);
 
             // 内容区 - 使用 LiteUI.cs 中定义的 BufferedPanel
@@ -145,23 +163,52 @@ namespace LiteMonitor.src.UI
             _pages.Clear();
             
             // 注册所有页面
-            AddNav("MainPanel", "🖥️ " + LanguageManager.T("Menu.MainFormSettings"), new MainPanelPage());
-            AddNav("Taskbar", "➖ " + LanguageManager.T("Menu.TaskbarSettings"), new TaskbarPage());
-            AddNav("Monitor", "📊 " + LanguageManager.T("Menu.MonitorItemDisplay"), new MonitorPage());
-            AddNav("Threshold", "🔔 " + LanguageManager.T("Menu.Thresholds"), new ThresholdPage());
-            AddNav("System", "⚙️ " + LanguageManager.T("Menu.SystemHardwar"), new SystemHardwarPage());
-            AddNav("Plugins", "🧩 " + LanguageManager.T("Menu.Plugins"), new PluginPage());
+            AddNav("MainPanel", "panel", LanguageManager.T("Menu.MainFormSettings"), new MainPanelPage());
+            AddNav("Taskbar", "taskbar", LanguageManager.T("Menu.TaskbarSettings"), new TaskbarPage());
+            AddNav("Monitor", "monitor", LanguageManager.T("Menu.MonitorItemDisplay"), new MonitorPage());
+            AddNav("Threshold", "threshold", LanguageManager.T("Menu.Thresholds"), new ThresholdPage());
+            AddNav("System", "system", LanguageManager.T("Menu.SystemHardwar"), new SystemHardwarPage());
+            AddNav("Plugins", "plugins", LanguageManager.T("Menu.Plugins"), new PluginPage());
 
             _pnlNavContainer.PerformLayout();
             SwitchPage("MainPanel");
+
+            // 页面首次加载可能会规范化草稿，等加载完再记录基线
+            this.Shown += (s, e) => BeginInvoke(new Action(() => { _baseline = SnapshotDraft(); _dirtyTimer.Start(); }));
         }
 
-        private void AddNav(string key, string text, SettingsPageBase page)
+        /// <summary>草稿中用户可编辑部分的快照（排除后台自动更新的运行时字段）。</summary>
+        private string SnapshotDraft()
+        {
+            try
+            {
+                var node = System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(_draftCfg))?.AsObject();
+                if (node == null) return "";
+                foreach (var key in node.Select(kv => kv.Key).ToList())
+                    if (SettingsChanger.IsRuntimeProp(key)) node.Remove(key);
+                return node.ToJsonString();
+            }
+            catch { return _baseline; }
+        }
+
+        private void UpdateDirtyState()
+        {
+            if (DateTime.Now < _appliedUntil) return;
+            bool dirty = _baseline.Length > 0 && SnapshotDraft() != _baseline;
+            string text = dirty ? "●  " + LanguageManager.T("Menu.UnsavedChanges") : "";
+            if (_lblDirty.Text != text)
+            {
+                _lblDirty.ForeColor = UIColors.TextWarn;
+                _lblDirty.Text = text;
+            }
+        }
+
+        private void AddNav(string key, string icon, string text, SettingsPageBase page)
         {
             // ★★★ 关键点 2：将 Draft 传递给页面，而不是 Live Settings ★★★
             page.SetContext(_draftCfg, _mainForm, _ui);
             _pages[key] = page;
-            var btn = new LiteNavBtn(text) { Tag = key };
+            var btn = new LiteNavBtn(text, icon) { Tag = key };
             btn.Click += (s, e) => SwitchPage(key);
             _pnlNavContainer.Controls.Add(btn);
         }
@@ -176,6 +223,8 @@ namespace LiteMonitor.src.UI
             foreach (Control c in _pnlNavContainer.Controls)
                 if (c is LiteNavBtn b) b.IsActive = ((string)b.Tag == key);
             _pnlNavContainer.ResumeLayout();
+            foreach (Control c in _pnlNavContainer.Controls)
+                if (c is LiteNavBtn b && (string)b.Tag == key) _pnlNavContainer.MoveTo(b);
             _pnlNavContainer.Refresh(); 
             Application.DoEvents();
 
@@ -247,6 +296,15 @@ namespace LiteMonitor.src.UI
             
             // 4. 应用副作用 (刷新界面)
             AppActions.ApplyAllSettings(_cfg, _mainForm, _ui, autoStartChanged);
+
+            // 未保存提示归零，短暂显示「已应用」
+            _baseline = SnapshotDraft();
+            _appliedUntil = DateTime.Now.AddSeconds(1.6);
+            if (_lblDirty != null)
+            {
+                _lblDirty.ForeColor = UIColors.Primary;
+                _lblDirty.Text = "✓  " + LanguageManager.T("Menu.SettingsApplied");
+            }
 
             // 5. [Fix] Rebase Draft to match Live
             // 将 Live 环境中由插件生成的最新监控项同步回 Draft，并保留动态显示属性

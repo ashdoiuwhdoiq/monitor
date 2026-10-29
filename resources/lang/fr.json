@@ -149,6 +149,8 @@
     "DetailNow": "Maintenant",
     "DetailClose": "Fermer",
     "TaskbarPerPixelAlpha": "Bords de texte lissés (transparence par pixel)",
+    "UnsavedChanges": "Modifications non enregistrées",
+    "SettingsApplied": "Paramètres appliqués",
     "DisplayMode": "Mode",
     "Vertical": "Panneau",
     "Horizontal": "Barre",

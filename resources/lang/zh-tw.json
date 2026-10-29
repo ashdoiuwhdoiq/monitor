@@ -145,6 +145,8 @@
     "DetailNow": "現在",
     "DetailClose": "關閉",
     "TaskbarPerPixelAlpha": "平滑文字邊緣（逐像素透明）",
+    "UnsavedChanges": "有未儲存的變更",
+    "SettingsApplied": "設定已套用",
     "DisplayMode": "顯示模式",
     "Vertical": "面板模式",
     "Horizontal": "橫條模式",

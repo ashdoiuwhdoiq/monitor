@@ -149,6 +149,8 @@
     "DetailNow": "現在",
     "DetailClose": "閉じる",
     "TaskbarPerPixelAlpha": "文字の縁を滑らかに（ピクセル単位の透過）",
+    "UnsavedChanges": "未保存の変更があります",
+    "SettingsApplied": "設定を適用しました",
     "DisplayMode": "表示モード",
     "Vertical": "パネル",
     "Horizontal": "バー",

@@ -148,6 +148,8 @@
     "DetailNow": "Сейчас",
     "DetailClose": "Закрыть",
     "TaskbarPerPixelAlpha": "Сглаженные края текста (попиксельная прозрачность)",
+    "UnsavedChanges": "Есть несохранённые изменения",
+    "SettingsApplied": "Настройки применены",
     "DisplayMode": "Режим",
     "Vertical": "Панель",
     "Horizontal": "Полоса",
