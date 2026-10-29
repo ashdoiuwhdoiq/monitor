@@ -147,6 +147,7 @@
     "DetailAgo": "vor {0} s",
     "DetailNow": "Jetzt",
     "DetailClose": "Schließen",
+    "TaskbarPerPixelAlpha": "Glatte Textkanten (Pixeltransparenz)",
     "DisplayMode": "Modus",
     "Vertical": "Box",
     "Horizontal": "Leiste",

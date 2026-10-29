@@ -147,6 +147,7 @@
     "DetailAgo": "{0}s ago",
     "DetailNow": "Now",
     "DetailClose": "Close",
+    "TaskbarPerPixelAlpha": "Smooth text edges (per-pixel transparency)",
     "DisplayMode": "Display Mode",
     "Vertical": "Panel",
     "Horizontal": "Bar",

@@ -121,11 +121,17 @@ namespace LiteMonitor.src.UI.Helpers
         // =================================================================
         // 样式与图层
         // =================================================================
+        /// <summary>
+        /// 逐像素透明模式：内容由 UpdateLayered 提交的 32 位位图决定，不再调用颜色键。
+        /// 两种模式互斥（调用过 SetLayeredWindowAttributes 的窗口 UpdateLayeredWindow 会失败）。
+        /// </summary>
+        public bool PerPixelAlpha { get; set; }
+
         public void ApplyLayeredStyle(Color transparentKey, bool clickThrough)
         {
             _form.BackColor = transparentKey;
-            
-            if (_form.IsHandleCreated)
+
+            if (_form.IsHandleCreated && !PerPixelAlpha)
             {
                 uint colorKey = (uint)(transparentKey.R | (transparentKey.G << 8) | (transparentKey.B << 16));
                 SetLayeredWindowAttributes(_form.Handle, colorKey, 0, LWA_COLORKEY);
@@ -138,6 +144,52 @@ namespace LiteMonitor.src.UI.Helpers
             
             _form.Invalidate();
         }
+
+        /// <summary>把带 Alpha 的位图提交为窗口内容。失败（老系统或驱动问题）时返回 false，调用方应退回颜色键模式。</summary>
+        public bool UpdateLayered(Bitmap bmp)
+        {
+            IntPtr screenDc = GetDC(IntPtr.Zero);
+            IntPtr memDc = CreateCompatibleDC(screenDc);
+            IntPtr hBmp = IntPtr.Zero, old = IntPtr.Zero;
+            try
+            {
+                hBmp = bmp.GetHbitmap(Color.FromArgb(0));
+                old = SelectObject(memDc, hBmp);
+                var size = new SIZE { cx = bmp.Width, cy = bmp.Height };
+                var src = new POINT { X = 0, Y = 0 };
+                var blend = new BLENDFUNCTION { BlendOp = 0 /*AC_SRC_OVER*/, BlendFlags = 0, SourceConstantAlpha = 255, AlphaFormat = 1 /*AC_SRC_ALPHA*/ };
+                return UpdateLayeredWindow(_form.Handle, screenDc, IntPtr.Zero, ref size, memDc, ref src, 0, ref blend, 2 /*ULW_ALPHA*/);
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                if (old != IntPtr.Zero) SelectObject(memDc, old);
+                if (hBmp != IntPtr.Zero) DeleteObject(hBmp);
+                DeleteDC(memDc);
+                ReleaseDC(IntPtr.Zero, screenDc);
+            }
+        }
+
+        /// <summary>摘掉再挂上 WS_EX_LAYERED，清除之前颜色键模式留下的状态，让 UpdateLayeredWindow 可用。</summary>
+        public void ResetLayeredState()
+        {
+            int ex = GetWindowLong(_form.Handle, GWL_EXSTYLE);
+            SetWindowLong(_form.Handle, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+            SetWindowLong(_form.Handle, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+        }
+
+        [StructLayout(LayoutKind.Sequential)] private struct SIZE { public int cx, cy; }
+        [StructLayout(LayoutKind.Sequential, Pack = 1)] private struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
+        [DllImport("user32.dll", SetLastError = true)] private static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, IntPtr pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
+        [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+        [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+        [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
+        [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
+        [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr hObject);
 
         public bool IsSystemLightTheme()
         {

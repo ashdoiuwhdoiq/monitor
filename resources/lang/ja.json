@@ -148,6 +148,7 @@
     "DetailAgo": "{0} 秒前",
     "DetailNow": "現在",
     "DetailClose": "閉じる",
+    "TaskbarPerPixelAlpha": "文字の縁を滑らかに（ピクセル単位の透過）",
     "DisplayMode": "表示モード",
     "Vertical": "パネル",
     "Horizontal": "バー",

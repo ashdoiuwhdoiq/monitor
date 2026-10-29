@@ -47,7 +47,7 @@ namespace LiteMonitor
             _isWin11 = Environment.OSVersion.Version >= new Version(10, 0, 22000);
 
             // 初始化组件
-            _winHelper = new TaskbarWinHelper(this);
+            _winHelper = new TaskbarWinHelper(this) { PerPixelAlpha = _cfg.TaskbarPerPixelAlpha };
             _bizHelper = new TaskbarBizHelper(this, _cfg, _winHelper);
 
             // 窗体属性
@@ -79,6 +79,13 @@ namespace LiteMonitor
         {
             _layout = new HorizontalLayout(ThemeManager.Current, 300, LayoutMode.Taskbar, _cfg);
             _lastLayoutSignature = ""; // 重置签名，强制重算
+            if (_winHelper.PerPixelAlpha != _cfg.TaskbarPerPixelAlpha)
+            {
+                // 设置里切换了透明方式：切到逐像素前先清掉颜色键状态
+                _winHelper.PerPixelAlpha = _cfg.TaskbarPerPixelAlpha;
+                _layeredResetTried = false;
+                if (_winHelper.PerPixelAlpha && IsHandleCreated) _winHelper.ResetLayeredState();
+            }
             _winHelper.ApplyLayeredStyle(_bizHelper.TransparentKey, _cfg.TaskbarClickThrough);
             _bizHelper.CheckTheme(true);
 
@@ -93,8 +100,46 @@ namespace LiteMonitor
                 Width = _layout.PanelWidth;
                 _bizHelper.UpdatePlacement(Width);
             }
+            Redraw();
+        }
+
+        /// <summary>
+        /// 重绘任务栏条。逐像素透明模式下直接把带 Alpha 的位图提交给系统；
+        /// 提交失败则永久退回原来的颜色键 + OnPaint 方式，保证任务栏条始终能显示。
+        /// </summary>
+        private void Redraw()
+        {
+            if (!_winHelper.PerPixelAlpha || !IsHandleCreated || Width <= 0 || Height <= 0)
+            {
+                Invalidate();
+                return;
+            }
+
+            using var bmp = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                // Alpha=1 的底色肉眼不可见，但让整条区域都能接收鼠标（悬停浮窗、右键菜单）
+                g.Clear(Color.FromArgb(1, 0, 0, 0));
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                if (_cols != null) TaskbarRenderer.Render(g, _cols, _bizHelper.LastIsLightTheme, alphaText: true);
+            }
+
+            if (_winHelper.UpdateLayered(bmp)) return;
+
+            if (!_layeredResetTried)
+            {
+                _layeredResetTried = true;
+                _winHelper.ResetLayeredState();
+                if (_winHelper.UpdateLayered(bmp)) return;
+            }
+
+            _winHelper.PerPixelAlpha = false;
+            _winHelper.ApplyLayeredStyle(_bizHelper.TransparentKey, _cfg.TaskbarClickThrough);
             Invalidate();
         }
+
+        private bool _layeredResetTried;
 
         protected override void Dispose(bool disposing)
         {
@@ -226,7 +271,7 @@ namespace LiteMonitor
             
             _tooltipHelper.UpdateContent();
 
-            Invalidate();
+            Redraw();
         }
 
         protected override void OnPaintBackground(PaintEventArgs e)

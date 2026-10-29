@@ -51,6 +51,7 @@ namespace LiteMonitor
 
         // ====== 任务栏 ======
         public bool ShowTaskbar { get; set; } = true;
+        public bool TaskbarPerPixelAlpha { get; set; } = true; // 任务栏条逐像素透明（文字无毛边）；失败时自动退回颜色键
         // ★★★ 新增：横条模式是否跟随任务栏布局？ ★★★
         public bool HorizontalFollowsTaskbar { get; set; } = false;
         public bool HideMainForm { get; set; } = false;

@@ -147,6 +147,7 @@
     "DetailAgo": "{0}초 전",
     "DetailNow": "현재",
     "DetailClose": "닫기",
+    "TaskbarPerPixelAlpha": "글자 가장자리 부드럽게(픽셀 단위 투명)",
     "DisplayMode": "표시 모드",
     "Vertical": "패널형",
     "Horizontal": "바형",

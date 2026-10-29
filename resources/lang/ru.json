@@ -147,6 +147,7 @@
     "DetailAgo": "{0} с назад",
     "DetailNow": "Сейчас",
     "DetailClose": "Закрыть",
+    "TaskbarPerPixelAlpha": "Сглаженные края текста (попиксельная прозрачность)",
     "DisplayMode": "Режим",
     "Vertical": "Панель",
     "Horizontal": "Полоса",

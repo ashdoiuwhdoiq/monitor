@@ -148,6 +148,7 @@
     "DetailAgo": "il y a {0} s",
     "DetailNow": "Maintenant",
     "DetailClose": "Fermer",
+    "TaskbarPerPixelAlpha": "Bords de texte lissés (transparence par pixel)",
     "DisplayMode": "Mode",
     "Vertical": "Panneau",
     "Horizontal": "Barre",

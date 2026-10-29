@@ -147,6 +147,7 @@
     "DetailAgo": "{0} 秒前",
     "DetailNow": "现在",
     "DetailClose": "关闭",
+    "TaskbarPerPixelAlpha": "平滑文字边缘（逐像素透明）",
     "DisplayMode": "显示模式",
     "Vertical": "面板模式",
     "Horizontal": "横条模式",

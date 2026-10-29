@@ -61,8 +61,12 @@ namespace LiteMonitor
             }
         }
 
-        public static void Render(Graphics g, List<Column> cols, bool light) // <--- 新的
+        // 逐像素透明模式下画在 32 位透明位图上：GDI 的 TextRenderer 会丢掉 Alpha，必须改用 GDI+ 灰度抗锯齿
+        private static bool _alphaText;
+
+        public static void Render(Graphics g, List<Column> cols, bool light, bool alphaText = false)
         {
+            _alphaText = alphaText;
             // [防空策略] 万一还没人调用 ReloadStyle，就自己兜底初始化一次
             if (_cachedFont == null)
             {
@@ -72,7 +76,7 @@ namespace LiteMonitor
             
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
             g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+            g.TextRenderingHint = alphaText ? TextRenderingHint.AntiAliasGridFit : TextRenderingHint.ClearTypeGridFit;
 
             // 使用传入的 light 参数，避免每次都查询系统主题瓠
             //bool light = IsSystemLight();
@@ -134,33 +138,32 @@ namespace LiteMonitor
             // ★★★ 修复：如果开启了隐藏标签 (如 IP/Dashboard)，则仅绘制 Value (左对齐) ★★★
             if (hideLabel)
             {
-                TextRenderer.DrawText(
-                    g, value, font, rc, valueColor,
-                    TextFormatFlags.Left |
-                    TextFormatFlags.VerticalCenter |
-                    TextFormatFlags.NoPadding |
-                    TextFormatFlags.NoClipping
-                );
+                DrawText(g, value, font, rc, valueColor, false);
                 return;
             }
 
-            // Label 左对齐
-            TextRenderer.DrawText(
-                g, label, font, rc, labelColor,
-                TextFormatFlags.Left |
-                TextFormatFlags.VerticalCenter |
-                TextFormatFlags.NoPadding |
-                TextFormatFlags.NoClipping
-            );
+            DrawText(g, label, font, rc, labelColor, false); // Label 左对齐
+            DrawText(g, value, font, rc, valueColor, true);  // Value 右对齐
+        }
 
-            // Value 右对齐
-            TextRenderer.DrawText(
-                g, value, font, rc, valueColor,
-                TextFormatFlags.Right |
-                TextFormatFlags.VerticalCenter |
-                TextFormatFlags.NoPadding |
-                TextFormatFlags.NoClipping
-            );
+        private static void DrawText(Graphics g, string text, Font font, Rectangle rc, Color color, bool alignRight)
+        {
+            if (!_alphaText)
+            {
+                TextRenderer.DrawText(g, text, font, rc, color,
+                    (alignRight ? TextFormatFlags.Right : TextFormatFlags.Left) |
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.NoClipping);
+                return;
+            }
+
+            using var sf = new StringFormat(StringFormat.GenericTypographic)
+            {
+                Alignment = alignRight ? StringAlignment.Far : StringAlignment.Near,
+                LineAlignment = StringAlignment.Center,
+                FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip | StringFormatFlags.MeasureTrailingSpaces
+            };
+            using var brush = new SolidBrush(color);
+            g.DrawString(text, font, brush, rc, sf);
         }
         // [新增] 辅助：根据状态快速获取颜色 (替代原来的 PickColor)
         private static Color GetStateColor(int state, bool light)
