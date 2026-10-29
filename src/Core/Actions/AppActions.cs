@@ -25,6 +25,10 @@ namespace LiteMonitor.src.Core.Actions
             // 防止 ApplyLanguage -> ApplyTheme 提前重置了 ui 的状态导致无法判断是否切换了模式
             bool wasHorizontal = ui.IsLayoutHorizontal;
 
+            // 应用窗口与菜单的深浅模式（菜单在之后的 RebuildMenus 中按新色板重建）
+            LiteMonitor.src.UI.Controls.UIColors.Apply(cfg.UIThemeMode);
+            LiteMonitor.src.UI.Controls.GraphiteMenuRenderer.Install();
+
             // 1. 语言变更 (注意：传 null 给 ui，防止它在此提前触发 ApplyTheme)
             ApplyLanguage(cfg, null, mainForm); 
 

@@ -96,7 +96,109 @@ namespace LiteMonitor
 
         public Color GetTextColor(Theme t)
         {
-            return UIUtils.GetStateColor(CachedColorState, t, true);
+            return _colorInit ? _textColor : UIUtils.GetStateColor(CachedColorState, t, true);
+        }
+
+        public Color GetBarColor(Theme t)
+        {
+            return _colorInit ? _barColor : UIUtils.GetStateColor(CachedColorState, t, false);
+        }
+
+        // =============================
+        // 动画状态（由 UIController 的动画时钟逐帧推进）
+        // =============================
+        private const int HistoryCapacity = 40;
+        private const float ColorTauMs = 160f;
+        private const float HoverTauMs = 70f;
+
+        private readonly float[] _history = new float[HistoryCapacity];
+        private int _historyStart, _historyCount;
+        private bool _colorInit;
+        private Color _textColor, _barColor;
+
+        /// <summary>悬停高亮的显现程度 0~1。</summary>
+        public float HoverAmount { get; private set; }
+        public bool HoverTarget { get; set; }
+
+        public int HistoryCount => _historyCount;
+        public float HistoryAt(int i) => _history[(_historyStart + i) % HistoryCapacity];
+
+        public void PushHistory(float v)
+        {
+            if (_historyCount < HistoryCapacity)
+            {
+                _history[(_historyStart + _historyCount) % HistoryCapacity] = v;
+                _historyCount++;
+            }
+            else
+            {
+                _history[_historyStart] = v;
+                _historyStart = (_historyStart + 1) % HistoryCapacity;
+            }
+        }
+
+        /// <summary>
+        /// 推进一帧：数值按时间常数逼近采样值，告警色与悬停高亮平滑过渡。
+        /// speed 即设置里的 AnimationSpeed，越大越快，≥0.9 时不做数值补间。
+        /// 返回 true 表示仍在变化、需要继续重绘。
+        /// </summary>
+        public bool Animate(float dtMs, double speed, Theme t)
+        {
+            bool moving = false;
+
+            if (Value.HasValue)
+            {
+                float target = Value.Value;
+                float diff = target - DisplayValue;
+                // 差距小到肉眼看不出（约 0.3%）就直接吸附，让动画时钟尽早停下、省 CPU
+                float eps = Math.Max(0.01f, Math.Abs(target) * 0.003f);
+                if (speed >= 0.9 || Math.Abs(diff) <= eps)
+                {
+                    DisplayValue = target;
+                }
+                else
+                {
+                    float tau = (float)(60 + (1 - Math.Clamp(speed, 0, 1)) * 360);
+                    DisplayValue += diff * Ease(dtMs, tau);
+                    moving = true;
+                }
+            }
+
+            Color textTarget = UIUtils.GetStateColor(CachedColorState, t, true);
+            Color barTarget = UIUtils.GetStateColor(CachedColorState, t, false);
+            if (!_colorInit)
+            {
+                _textColor = textTarget;
+                _barColor = barTarget;
+                _colorInit = true;
+            }
+            else
+            {
+                float k = Ease(dtMs, ColorTauMs);
+                moving |= StepColor(ref _textColor, textTarget, k);
+                moving |= StepColor(ref _barColor, barTarget, k);
+            }
+
+            float hoverTarget = HoverTarget ? 1f : 0f;
+            float hd = hoverTarget - HoverAmount;
+            if (Math.Abs(hd) < 0.01f) HoverAmount = hoverTarget;
+            else { HoverAmount += hd * Ease(dtMs, HoverTauMs); moving = true; }
+
+            return moving;
+        }
+
+        private static float Ease(float dtMs, float tauMs) => 1f - MathF.Exp(-dtMs / tauMs);
+
+        private static bool StepColor(ref Color c, Color target, float k)
+        {
+            if (c.ToArgb() == target.ToArgb()) return false;
+            int Ch(int a, int b)
+            {
+                int v = (int)Math.Round(a + (b - a) * k);
+                return v == a ? a + Math.Sign(b - a) : v; // 至少走一个色阶，避免尾段停住不动
+            }
+            c = Color.FromArgb(Ch(c.A, target.A), Ch(c.R, target.R), Ch(c.G, target.G), Ch(c.B, target.B));
+            return true;
         }
 
         public string GetFormattedText(bool isHorizontal)

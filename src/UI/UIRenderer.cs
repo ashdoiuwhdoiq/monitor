@@ -37,12 +37,19 @@ namespace LiteMonitor
             foreach (var gr in groups)
             {
                 DrawGroupBackground(g, gr, t);
-                
+                if (gr.Bounds.Height <= 0) continue;
+
+                // 折叠动画过程中，把子项裁剪在正在收缩的组框内
+                bool clipping = gr.Bounds.Height < gr.FullBounds.Height;
+                var saved = g.Save();
+                if (clipping) g.SetClip(gr.Bounds);
+
                 // 遍历子项绘制 (不再区分 NET/DISK，统一由 Item.Style 决定)
                 for (int i = 0; i < gr.Items.Count; i++)
                 {
                     var it = gr.Items[i];
                     bool isLast = (i == gr.Items.Count - 1);
+                    if (clipping && it.Bounds.Top >= gr.Bounds.Bottom) continue;
 
                     if (it.Style == MetricRenderStyle.TwoColumn)
                         DrawTwoColumnItem(g, it, t);
@@ -51,7 +58,62 @@ namespace LiteMonitor
                     else
                         DrawStandardItem(g, it, t);
                 }
+
+                g.Restore(saved);
             }
+        }
+
+        // TextRenderer 默认忽略 Graphics 的裁剪区，折叠动画需要它遵守
+        private const TextFormatFlags Clip = TextFormatFlags.PreserveGraphicsClipping;
+
+        /// <summary>悬停高亮：圆角底色 + 背景里的近 40 秒走势线，随 HoverAmount 淡入淡出。</summary>
+        private static void DrawHover(Graphics g, MetricItem it, Theme t)
+        {
+            float h = it.HoverAmount;
+            if (h <= 0.01f || it.Bounds.Width <= 0) return;
+
+            float s = t.Layout.LayoutScale > 0 ? t.Layout.LayoutScale : 1f;
+            var rect = Rectangle.Inflate(it.Bounds, -(int)(2 * s), 0);
+            Color baseBg = ThemeManager.ParseColor(t.Color.GroupBackground);
+            Color ink = ThemeManager.ParseColor(t.Color.TextPrimary);
+            Color hover = Blend(baseBg, ink, 0.08f);
+            UIUtils.FillRoundRect(g, rect, (int)(8 * s), Color.FromArgb((int)(255 * h), hover));
+
+            int n = it.HistoryCount;
+            if (n < 2) return;
+            float lo = float.MaxValue, hi = float.MinValue;
+            for (int i = 0; i < n; i++) { float v = it.HistoryAt(i); lo = Math.Min(lo, v); hi = Math.Max(hi, v); }
+            float pad = Math.Max((hi - lo) * 0.2f, Math.Max(Math.Abs(hi) * 0.05f, 0.5f));
+            lo -= pad; hi += pad;
+
+            float top = rect.Top + 4 * s, bottom = rect.Bottom - 2 * s;
+            var pts = new PointF[n];
+            for (int i = 0; i < n; i++)
+            {
+                float x = rect.Left + rect.Width * i / (float)(n - 1);
+                float y = bottom - (it.HistoryAt(i) - lo) / (hi - lo) * (bottom - top);
+                pts[i] = new PointF(x, y);
+            }
+
+            Color line = it.GetBarColor(t);
+            using (var path = new GraphicsPath())
+            {
+                path.AddLines(pts);
+                path.AddLine(pts[n - 1].X, rect.Bottom, pts[0].X, rect.Bottom);
+                path.CloseFigure();
+                using var fill = new SolidBrush(Color.FromArgb((int)(26 * h), line));
+                g.FillPath(fill, path);
+            }
+            using var pen = new Pen(Color.FromArgb((int)(150 * h), line), 1.3f * s) { LineJoin = LineJoin.Round };
+            g.DrawLines(pen, pts);
+        }
+
+        private static Color Blend(Color a, Color b, float k)
+        {
+            return Color.FromArgb(
+                (int)(a.R + (b.R - a.R) * k),
+                (int)(a.G + (b.G - a.G) * k),
+                (int)(a.B + (b.B - a.B) * k));
         }
 
         private static void DrawMainTitle(Graphics g, Theme t)
@@ -69,7 +131,7 @@ namespace LiteMonitor
 
             TextRenderer.DrawText(g, title, t.FontTitle, titleRect,
                 ThemeManager.ParseColor(t.Color.TextTitle),
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | Clip);
         }
 
         private static void DrawGroupBackground(Graphics g, GroupLayoutInfo gr, Theme t)
@@ -97,9 +159,33 @@ namespace LiteMonitor
                 gr.Bounds.Width - gp * 2, 
                 titleH + extraH);
 
-            TextRenderer.DrawText(g, label, t.FontGroup, rectTitle,
-                ThemeManager.ParseColor(t.Color.TextGroup),
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            Color groupColor = ThemeManager.ParseColor(t.Color.TextGroup);
+            TextRenderer.DrawText(g, label, t.FontGroup, rectTitle, groupColor,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | Clip);
+
+            // 折叠指示：右侧的箭头随展开程度旋转；折叠时在标题行显示前两项的数值摘要
+            float s = t.Layout.LayoutScale > 0 ? t.Layout.LayoutScale : 1f;
+            float collapse = 1f - Math.Clamp(gr.Expand, 0f, 1f);
+            float cx = gr.Bounds.Right - gp - 4 * s;
+            float cy = rectTitle.Top + rectTitle.Height / 2f;
+            var saved = g.Save();
+            g.TranslateTransform(cx, cy);
+            g.RotateTransform(-90f * collapse);
+            using (var pen = new Pen(Color.FromArgb(170, groupColor), 1.4f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                g.DrawLines(pen, new[] { new PointF(-3.5f * s, -1.8f * s), new PointF(0, 1.8f * s), new PointF(3.5f * s, -1.8f * s) });
+            }
+            g.Restore(saved);
+
+            if (collapse > 0.01f && gr.Items.Count > 0)
+            {
+                string summary = string.Join(" · ", gr.Items.Take(2).Select(it => it.GetFormattedText(true)));
+                Color bg = ThemeManager.ParseColor(t.Color.Background);
+                Color sumColor = Blend(bg, groupColor, collapse);
+                var rectSum = new Rectangle(rectTitle.X, rectTitle.Y, rectTitle.Width - (int)(14 * s), rectTitle.Height);
+                TextRenderer.DrawText(g, summary, t.FontGroup, rectSum, sumColor,
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            }
         }
 
         /// <summary>
@@ -108,6 +194,7 @@ namespace LiteMonitor
         private static void DrawStandardItem(Graphics g, MetricItem it, Theme t)
         {
             if (it.Bounds == Rectangle.Empty) return;
+            DrawHover(g, it, t);
 
             // Label (左对齐)
             // ★★★ 优化：直接使用缓存的 it.Label ★★★
@@ -115,7 +202,7 @@ namespace LiteMonitor
 
             TextRenderer.DrawText(g, label, t.FontItem, it.LabelRect,
                 ThemeManager.ParseColor(t.Color.TextPrimary),
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | Clip);
 
             // Value (右对齐)  传入 false 表示竖屏/普通模式
             string valText = it.GetFormattedText(false);
@@ -125,7 +212,7 @@ namespace LiteMonitor
 
             TextRenderer.DrawText(g, valText, t.FontValue, it.ValueRect,
                 valColor,
-                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | Clip);
 
             // Bar - 注意：这里调用的是 UIUtils.DrawBar，它现在已经使用了优化的画刷逻辑
             UIUtils.DrawBar(g, it, t);
@@ -137,13 +224,14 @@ namespace LiteMonitor
         private static void DrawTwoColumnItem(Graphics g, MetricItem it, Theme t)
         {
             if (it.Bounds == Rectangle.Empty) return;
+            DrawHover(g, it, t);
 
             // Label (居中顶部)
             string label = string.IsNullOrEmpty(it.Label) ? it.Key : it.Label;
             
             TextRenderer.DrawText(g, label, t.FontItem, it.LabelRect,
                 ThemeManager.ParseColor(t.Color.TextPrimary),
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.NoPadding);
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.NoPadding | Clip);
 
             // Value (居中底部)
             // ★★★ [优化]：如果用户使用了自定义单位 (HasCustomUnit)，则跳过窄屏自动精简逻辑 ★★★
@@ -157,7 +245,7 @@ namespace LiteMonitor
 
             TextRenderer.DrawText(g, valText, t.FontValue, it.ValueRect,
                 valColor,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.Bottom | TextFormatFlags.NoPadding);
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.Bottom | TextFormatFlags.NoPadding | Clip);
         }
 
         // [新增] 绘制纯文本项方法
@@ -169,7 +257,7 @@ namespace LiteMonitor
             string label = string.IsNullOrEmpty(it.Label) ? it.Key : it.Label;
             TextRenderer.DrawText(g, label, t.FontItem, it.LabelRect,
                 ThemeManager.ParseColor(t.Color.TextPrimary),
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | Clip);
 
             // 2. 绘制右侧数值 (192.168.x.x)
             // ★★★ 修复：直接使用布局计算好的 ValueRect (已修正为全宽) ★★★
@@ -181,7 +269,7 @@ namespace LiteMonitor
             Color valColor = it.GetTextColor(t);
             TextRenderer.DrawText(g, text, t.FontItem, it.ValueRect,
                 valColor, 
-                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | Clip);
 
             // ★★★ 修复：补充分割线 (最后一行不画) ★★★
             if (!isLast)

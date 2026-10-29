@@ -18,6 +18,14 @@ namespace LiteMonitor
         public Rectangle Bounds { get; set; }
         public List<MetricItem> Items { get; set; }
 
+        /// <summary>展开程度 0（折叠）~1（展开），折叠动画逐帧推进。</summary>
+        public float Expand { get; set; } = 1f;
+        public bool Collapsed { get; set; }
+        /// <summary>组标题所在的可点击区域。</summary>
+        public Rectangle HeaderRect { get; set; }
+        /// <summary>未折叠时的完整区域，用于裁剪折叠过程中的子项。</summary>
+        public Rectangle FullBounds { get; set; }
+
         public GroupLayoutInfo(string name, List<MetricItem> items)
         {
             GroupName = name;
@@ -189,9 +197,17 @@ namespace LiteMonitor
                     contentHeight -= _t.Layout.ItemGap;
                 }
 
-                // 3. 结算组高度
-                int groupHeight = groupPadding * 2 + contentHeight;
+                // 3. 结算组高度（折叠时按展开程度收缩，标题行保留）
+                int fullHeight = groupPadding * 2 + contentHeight;
+                float expand = Math.Clamp(g.Expand, 0f, 1f);
+                int groupHeight = (int)Math.Round(fullHeight * expand);
+                g.FullBounds = new Rectangle(x, y, w, fullHeight);
                 g.Bounds = new Rectangle(x, y, w, groupHeight);
+
+                int titleH = _t.FontGroup.Height;
+                int headerPad = (int)(4 * s);
+                int headerY = Math.Max(0, y - _t.Layout.GroupTitleOffset - titleH - headerPad);
+                g.HeaderRect = new Rectangle(x, headerY, w, y - headerY);
 
                 // 4. 移动 Y 轴到下一组
                 if (idx < groups.Count - 1)

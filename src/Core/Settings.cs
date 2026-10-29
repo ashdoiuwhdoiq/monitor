@@ -31,6 +31,7 @@ namespace LiteMonitor
         public bool ClampToScreen { get; set; } = true;
         public int PanelWidth { get; set; } = 240;
         public double UIScale { get; set; } = 1.0;
+        public List<string> CollapsedGroups { get; set; } = new List<string>(); // 主面板中被折叠的分组
 
         // ====== 硬件相关 ======
         public string PreferredNetwork { get; set; } = "";

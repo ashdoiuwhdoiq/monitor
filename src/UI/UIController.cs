@@ -16,6 +16,13 @@ namespace LiteMonitor
         private readonly HardwareMonitor _mon;
         private readonly System.Windows.Forms.Timer _timer;
 
+        // 动画时钟：只在有数值、颜色、悬停或折叠在变化时运行，静止时自动停下
+        private readonly System.Windows.Forms.Timer _animTimer;
+        private readonly System.Diagnostics.Stopwatch _animClock = System.Diagnostics.Stopwatch.StartNew();
+        private long _lastFrameMs;
+        private MetricItem? _hoverItem;
+        private const float CollapseTauMs = 110f;
+
         private UILayout _layout;
         private bool _layoutDirty = true;
         private bool _dragging = false;
@@ -47,6 +54,9 @@ namespace LiteMonitor
             _timer = new System.Windows.Forms.Timer { Interval = Math.Max(80, _cfg.RefreshMs) };
             _timer.Tick += (_, __) => Tick();
             _timer.Start();
+
+            _animTimer = new System.Windows.Forms.Timer { Interval = 15 };
+            _animTimer.Tick += (_, __) => AnimFrame();
 
             ApplyTheme(_cfg.Skin);
         }
@@ -199,7 +209,7 @@ namespace LiteMonitor
                         else
                         {
                             it.Value = _mon.Get(it.Key);
-                            it.TickSmooth(_cfg.AnimationSpeed);
+                            if (it.Value.HasValue) it.PushHistory(it.Value.Value);
                         }
                     }
 
@@ -217,10 +227,9 @@ namespace LiteMonitor
                              string val = InfoService.Instance.GetValue(dashKey);
                              it.TextValue = val;
                         }
-                        else 
+                        else
                         {
                             it.Value = _mon.Get(it.Key);
-                            it.TickSmooth(_cfg.AnimationSpeed);
                         }
                     }
                     UpdateItem(col.Top);
@@ -249,12 +258,115 @@ namespace LiteMonitor
                     }
                 }
 
-                _form.Invalidate();   
+                _form.Invalidate();
+                StartAnim();
             }
             finally
             {
                 _busy = false;
             }
+        }
+
+        // ================= 动画与交互 =================
+
+        private void StartAnim()
+        {
+            if (_animTimer.Enabled) return;
+            _lastFrameMs = _animClock.ElapsedMilliseconds;
+            _animTimer.Start();
+        }
+
+        private void AnimFrame()
+        {
+            long now = _animClock.ElapsedMilliseconds;
+            float dt = Math.Clamp(now - _lastFrameMs, 1, 100);
+            _lastFrameMs = now;
+
+            var t = ThemeManager.Current;
+            double speed = _cfg.AnimationSpeed;
+            bool moving = false;
+
+            foreach (var g in _groups)
+            {
+                float target = g.Collapsed ? 0f : 1f;
+                float d = target - g.Expand;
+                if (Math.Abs(d) > 0.002f)
+                {
+                    g.Expand += d * (1f - MathF.Exp(-dt / CollapseTauMs));
+                    _layoutDirty = true;
+                    moving = true;
+                }
+                else if (g.Expand != target)
+                {
+                    g.Expand = target;
+                    _layoutDirty = true;
+                }
+
+                foreach (var it in g.Items) moving |= it.Animate(dt, speed, t);
+            }
+
+            void AnimCols(List<Column> cols)
+            {
+                foreach (var col in cols)
+                {
+                    if (col.Top != null) moving |= col.Top.Animate(dt, speed, t);
+                    if (col.Bottom != null) moving |= col.Bottom.Animate(dt, speed, t);
+                }
+            }
+            AnimCols(_hxColsHorizontal);
+            AnimCols(_hxColsTaskbar);
+
+            _form.Invalidate();
+            if (!moving) _animTimer.Stop();
+        }
+
+        /// <summary>主面板鼠标移动：更新悬停行（仅竖屏模式）。传 null 表示离开面板。</summary>
+        public void SetHover(Point? clientPt)
+        {
+            MetricItem? hit = null;
+            if (clientPt.HasValue && !_cfg.HorizontalMode)
+            {
+                foreach (var g in _groups)
+                {
+                    if (g.Expand < 0.99f) continue;
+                    foreach (var it in g.Items)
+                    {
+                        if (it.Style != MetricRenderStyle.TextOnly && it.Bounds.Contains(clientPt.Value)) { hit = it; break; }
+                    }
+                    if (hit != null) break;
+                }
+            }
+            if (hit == _hoverItem) return;
+            if (_hoverItem != null) _hoverItem.HoverTarget = false;
+            _hoverItem = hit;
+            if (hit != null) hit.HoverTarget = true;
+            StartAnim();
+        }
+
+        /// <summary>主面板单击（未拖动）：点在分组标题上则折叠或展开该组。返回是否处理。</summary>
+        public bool HandleClick(Point clientPt)
+        {
+            if (_cfg.HorizontalMode) return false;
+            foreach (var g in _groups)
+            {
+                if (!g.HeaderRect.Contains(clientPt)) continue;
+                g.Collapsed = !g.Collapsed;
+                _cfg.CollapsedGroups ??= new List<string>();
+                _cfg.CollapsedGroups.RemoveAll(x => x == g.GroupName);
+                if (g.Collapsed) _cfg.CollapsedGroups.Add(g.GroupName);
+                _cfg.Save();
+                StartAnim();
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>鼠标是否在可点击的分组标题上（用于切换手形光标）。</summary>
+        public bool IsOverHeader(Point clientPt)
+        {
+            if (_cfg.HorizontalMode) return false;
+            foreach (var g in _groups) if (g.HeaderRect.Contains(clientPt)) return true;
+            return false;
         }
 
         private void BuildMetrics()
@@ -288,6 +400,7 @@ namespace LiteMonitor
                     if (_cfg.GroupAliases.ContainsKey(currentGroupKey)) gName = _cfg.GroupAliases[currentGroupKey];
                     
                     gr.Label = gName;
+                    ApplyCollapsed(gr);
                     _groups.Add(gr);
                     currentGroupList = new List<MetricItem>();
                 }
@@ -336,8 +449,15 @@ namespace LiteMonitor
                  if (_cfg.GroupAliases.ContainsKey(currentGroupKey)) gName = _cfg.GroupAliases[currentGroupKey];
                 
                 gr.Label = gName;
+                    ApplyCollapsed(gr);
                 _groups.Add(gr);
             }
+        }
+
+        private void ApplyCollapsed(GroupLayoutInfo gr)
+        {
+            gr.Collapsed = _cfg.CollapsedGroups?.Contains(gr.GroupName) == true;
+            gr.Expand = gr.Collapsed ? 0f : 1f;
         }
 
         private void BuildHorizontalColumns()
@@ -511,6 +631,8 @@ namespace LiteMonitor
         {
             _timer.Stop();
             _timer.Dispose();
+            _animTimer.Stop();
+            _animTimer.Dispose();
             _mon.Dispose();
         }
     }

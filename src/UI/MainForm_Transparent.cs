@@ -25,6 +25,8 @@ namespace LiteMonitor
 
         private Point _dragOffset;
         private bool _uiDragging = false;
+        private bool _dragMoved = false;
+        private const int DragThreshold = 4;
 
         // 防止 Win11 自动隐藏无边框 + 无任务栏窗口
         protected override CreateParams CreateParams
@@ -129,6 +131,10 @@ namespace LiteMonitor
             LanguageManager.Load(_cfg.Language);
             _cfg.SyncToLanguage();
 
+            // 应用窗口与菜单的深浅色板
+            src.UI.Controls.UIColors.Apply(_cfg.UIThemeMode);
+            src.UI.Controls.GraphiteMenuRenderer.Install();
+
             // 1. 初始化业务
             // ★★★ Fix: 初始化全局 DPI 缩放系数，防止未打开设置面板时弹窗排版异常 ★★★
             UIUtils.ScaleFactor = this.DeviceDpi / 96f;
@@ -175,34 +181,51 @@ namespace LiteMonitor
 
         private void BindEvents()
         {
-            // 拖拽
+            // 拖拽：按下后移动超过阈值才算拖动，否则松开时视为单击（用于折叠分组）
             MouseDown += (_, e) =>
             {
                 if (e.Button == MouseButtons.Left)
                 {
-                    _ui?.SetDragging(true);
-                    _uiDragging = true;
-                    _bizHelper.IsDragging = true;
                     _dragOffset = e.Location;
+                    _dragMoved = false;
                 }
             };
             MouseMove += (_, e) =>
             {
                 if (e.Button == MouseButtons.Left)
                 {
-                    if (Math.Abs(e.X - _dragOffset.X) + Math.Abs(e.Y - _dragOffset.Y) < 1) return;
+                    if (!_dragMoved)
+                    {
+                        if (Math.Abs(e.X - _dragOffset.X) + Math.Abs(e.Y - _dragOffset.Y) < DragThreshold) return;
+                        _dragMoved = true;
+                        _ui?.SetDragging(true);
+                        _uiDragging = true;
+                        _bizHelper.IsDragging = true;
+                        _ui?.SetHover(null);
+                    }
                     Location = new Point(Left + e.X - _dragOffset.X, Top + e.Y - _dragOffset.Y);
+                    return;
                 }
+
+                _ui?.SetHover(e.Location);
+                Cursor = _ui?.IsOverHeader(e.Location) == true ? Cursors.Hand : Cursors.Default;
             };
+            MouseLeave += (_, __) => _ui?.SetHover(null);
             MouseUp += (_, e) =>
             {
-                if (e.Button == MouseButtons.Left)
+                if (e.Button != MouseButtons.Left) return;
+                if (_dragMoved)
                 {
                     _ui?.SetDragging(false);
                     _uiDragging = false;
                     _bizHelper.IsDragging = false;
-                    _bizHelper.ClampToScreen(); 
+                    _bizHelper.ClampToScreen();
                     _bizHelper.SavePos();
+                    _dragMoved = false;
+                }
+                else
+                {
+                    _ui?.HandleClick(e.Location);
                 }
             };
 

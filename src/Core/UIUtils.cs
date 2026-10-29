@@ -203,7 +203,7 @@ namespace LiteMonitor.src.Core
             if (w < 1 && percent > 0) w = 1; // 绝对防御：只要有百分比，至少画1像素
 
             // Color
-            Color barColor = GetStateColor(item.CachedColorState, t, false);
+            Color barColor = item.GetBarColor(t);
 
             if (w > 0)
             {
