@@ -15,10 +15,17 @@ namespace LiteMonitor.src.UI.Helpers
     public class LiteTooltipForm : Form
     {
         // 布局常量
-        private const int PADDING_X = 10;
-        private const int PADDING_Y = 8;
-        private const int ROW_HEIGHT = 22;
-        private const int GROUP_GAP = 4;     // 组间距
+        private const int PADDING_X = 14;
+        private const int PADDING_Y = 10;
+        private const int ROW_HEIGHT = 24;
+        private const int GROUP_GAP = 5;     // 组间距
+
+        // 出现时的淡入（不抢焦点、不影响定位逻辑）
+        private readonly System.Windows.Forms.Timer _fadeTimer = new System.Windows.Forms.Timer { Interval = 15 };
+        private readonly System.Diagnostics.Stopwatch _fadeClock = new System.Diagnostics.Stopwatch();
+        private const int FadeMs = 160;
+        private double _targetOpacity = 1.0;
+        private Color _textColor = Color.White;
         
         // 缓存数据
         private List<GroupLayoutInfo>? _groups;
@@ -47,7 +54,50 @@ namespace LiteMonitor.src.UI.Helpers
             
             // 启用高质量绘制
             SetStyle(ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+
+            _fadeTimer.Tick += (_, __) =>
+            {
+                double p = Math.Min(1.0, _fadeClock.ElapsedMilliseconds / (double)FadeMs);
+                double eased = 1 - Math.Pow(1 - p, 3);
+                Opacity = _targetOpacity * eased;
+                if (p >= 1.0) _fadeTimer.Stop();
+            };
         }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            try
+            {
+                int pref = 3; // DWMWCP_ROUNDSMALL：Win11 圆角，旧系统忽略
+                DwmSetWindowAttribute(Handle, 33, ref pref, sizeof(int));
+            }
+            catch { }
+        }
+
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (Visible)
+            {
+                Opacity = 0;
+                _fadeClock.Restart();
+                _fadeTimer.Start();
+            }
+            else
+            {
+                _fadeTimer.Stop();
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _fadeTimer.Dispose();
+            base.Dispose(disposing);
+        }
+
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
         protected override bool ShowWithoutActivation => true; // 不抢焦点
 
@@ -60,7 +110,8 @@ namespace LiteMonitor.src.UI.Helpers
             _theme = theme;
             _scale = scale;
             _isBold = isBold;
-            this.Opacity = Math.Clamp(opacity, 0.1, 1.0);
+            _targetOpacity = Math.Clamp(opacity + 0.08, 0.5, 1.0);
+            if (!_fadeTimer.Enabled) this.Opacity = _targetOpacity;
 
             // 同步主题颜色
             if (_theme != null)
@@ -73,9 +124,10 @@ namespace LiteMonitor.src.UI.Helpers
                 Color groupBg = ThemeManager.ParseColor(_theme.Color.GroupBackground);
                 _bgColor = BlendColor(windowBg, groupBg);
 
-                // 边框色可以用 BarBackground 或自定义稍微亮一点的
-                _borderColor = ThemeManager.ParseColor(_theme.Color.BarBackground);
-                _separatorColor = ThemeManager.ParseColor(_theme.Color.BarBackground);
+                // 边框与分隔线由底色向文字色微微靠拢，深浅主题下都克制而清晰
+                _textColor = ThemeManager.ParseColor(_theme.Color.TextPrimary);
+                _borderColor = Mix(_bgColor, _textColor, 0.14f);
+                _separatorColor = Mix(_bgColor, _textColor, 0.08f);
             }
 
             CalculateLayout(fixedWidth);
@@ -103,6 +155,9 @@ namespace LiteMonitor.src.UI.Helpers
             // 确保结果不透明 (防止与窗体底色 Black 再次混合)
             return Color.FromArgb(255, Math.Clamp(r, 0, 255), Math.Clamp(g, 0, 255), Math.Clamp(b, 0, 255));
         }
+
+        private static Color Mix(Color a, Color b, float k) =>
+            Color.FromArgb((int)(a.R + (b.R - a.R) * k), (int)(a.G + (b.G - a.G) * k), (int)(a.B + (b.B - a.B) * k));
 
         private int S(int val) => (int)(val * _scale);
 
@@ -260,6 +315,8 @@ namespace LiteMonitor.src.UI.Helpers
 
             // 优化：提前获取字体，避免在循环中重复查找 (GetFont 内部虽然有字典缓存，但仍有哈希查找开销)
             var smallFont = UIUtils.GetFont(_theme.FontItem.FontFamily.Name, Math.Max(8f, _theme.FontItem.Size - 0.5f), _isBold);
+            // 数值用主题的等宽数字字体，跳动时宽度不变
+            var valueFont = UIUtils.GetFont(_theme.FontValue.FontFamily.Name, Math.Max(8f, _theme.FontItem.Size - 0.5f), true);
 
             for (int i = 0; i < _groups.Count; i++)
             {
@@ -289,7 +346,7 @@ namespace LiteMonitor.src.UI.Helpers
                     string valText = item.GetFormattedText(false); 
                     Color valColor = item.GetTextColor(_theme);
                     
-                    TextRenderer.DrawText(g, valText, smallFont, rectLabel, valColor,
+                    TextRenderer.DrawText(g, valText, valueFont, rectLabel, valColor,
                         TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
 
                     currentY += rowHeight;
