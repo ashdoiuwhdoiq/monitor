@@ -2,6 +2,8 @@ using LiteMonitor.src.Core;
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace LiteMonitor.src.UI.Graphite
@@ -12,8 +14,11 @@ namespace LiteMonitor.src.UI.Graphite
     /// </summary>
     public sealed class TaskbarFlyout : Form
     {
-        private const int W = 272, H = 206, Caret = 7;
+        private const int W = 272, H = 206, Caret = 7, Pad = 2;
 
+        // 逐像素分层窗口：每帧一次 UpdateLayeredWindow 同时提交位置、整体透明度与画面，
+        // 不再逐帧改 Opacity / Region（那会让系统整窗重新合成，滑动时明显掉帧）。
+        // 卡片内容只在数据或列变化时重画一次并缓存，动画帧只做缩放贴图 + 画指向箭头。
         private readonly System.Windows.Forms.Timer _timer = new() { Interval = 15 };
         private readonly Tween _show = new(0), _fade = new(0), _x = new(0), _caret = new(0);
         private MetricItem? _a, _b;
@@ -21,6 +26,8 @@ namespace LiteMonitor.src.UI.Graphite
         private bool _dark = true;
         private int _baseY;
         private bool _want;
+        private Bitmap? _card, _frame;
+        private bool _cardDirty = true;
 
         public TaskbarFlyout()
         {
@@ -28,9 +35,7 @@ namespace LiteMonitor.src.UI.Graphite
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
             TopMost = true;
-            DoubleBuffered = true;
-            Opacity = 0;
-            Size = new Size(S(W), S(H) + S(Caret));
+            Size = new Size(S(W) + Pad * 2, S(H) + S(Caret) + Pad * 2);
             _timer.Tick += (_, __) => Frame();
         }
 
@@ -42,7 +47,8 @@ namespace LiteMonitor.src.UI.Graphite
             get
             {
                 var cp = base.CreateParams;
-                cp.ExStyle |= 0x80 | 0x08000000 | 0x20; // TOOLWINDOW | NOACTIVATE | TRANSPARENT（鼠标穿透，不挡任务栏）
+                // LAYERED | TOOLWINDOW | NOACTIVATE | TRANSPARENT（鼠标穿透，不挡任务栏）
+                cp.ExStyle |= 0x80000 | 0x80 | 0x08000000 | 0x20;
                 return cp;
             }
         }
@@ -50,13 +56,13 @@ namespace LiteMonitor.src.UI.Graphite
         /// <summary>显示或切换到某一列。columnScreen 为该列在屏幕上的区域，taskbar 为任务栏条区域。</summary>
         public void ShowFor(MetricItem? a, MetricItem? b, string title, Rectangle columnScreen, Rectangle taskbar, bool dark)
         {
+            if (a != _a || b != _b || title != _title || dark != _dark) _cardDirty = true;
             _a = a; _b = b; _title = title; _dark = dark;
-            var area = Screen.FromRectangle(taskbar).WorkingArea;
             var bounds = Screen.FromRectangle(taskbar).Bounds;
             bool bottom = taskbar.Top > bounds.Top + bounds.Height / 2;
             int cx = columnScreen.X + columnScreen.Width / 2;
             int left = Math.Clamp(cx - S(W) / 2, bounds.Left + S(16), bounds.Right - S(16) - S(W));
-            _baseY = bottom ? taskbar.Top - S(12) - Height : taskbar.Bottom + S(12);
+            _baseY = bottom ? taskbar.Top - S(12) - (Height - Pad * 2) : taskbar.Bottom + S(12);
 
             bool appearing = !_want || !Visible;
             if (appearing) { _x.Snap(left); _caret.Snap(cx - left); }
@@ -68,9 +74,8 @@ namespace LiteMonitor.src.UI.Graphite
             _show.Set(1, 500, new Ease(.34, 1.45, .64, 1));
             _fade.Set(1, 220, Motion.Out);
             _want = true;
-            if (!Visible) { Place(); Show(); }
-            _timer.Start();
-            Invalidate();
+            if (!Visible) Show();
+            Kick();
         }
 
         public void HideFlyout()
@@ -79,63 +84,102 @@ namespace LiteMonitor.src.UI.Graphite
             _want = false;
             _show.Set(0, 300, Motion.Out);
             _fade.Set(0, 220, Motion.Out);
-            _timer.Start();
+            Kick();
         }
 
-        public void RefreshContent() { if (Visible) Invalidate(); }
+        public void RefreshContent()
+        {
+            if (!Visible) return;
+            _cardDirty = true;
+            if (!_timer.Enabled) Frame();
+        }
+
+        /// <summary>立刻出第一帧并以 ~60fps 继续（之前静止时降到 250ms 一帧，切列时首帧要等满这段，所以卡）。</summary>
+        private void Kick()
+        {
+            _timer.Interval = 15;
+            Frame();
+            _timer.Start();
+        }
 
         private void Frame()
         {
             long now = Motion.Now;
-            Place();
-            Invalidate();
-            if (!_want && !_fade.IsRunning(now)) { _timer.Stop(); Hide(); return; }
-            bool settled = !_show.IsRunning(now) && !_x.IsRunning(now) && !_fade.IsRunning(now);
-            _timer.Interval = settled ? 250 : 15;
+            if (!_want && !_fade.IsRunning(now) && _fade.Value(now) <= 0.01f) { _timer.Stop(); Hide(); return; }
+            Present(now);
+            bool moving = _show.IsRunning(now) || _x.IsRunning(now) || _caret.IsRunning(now) || _fade.IsRunning(now);
+            if (!moving) _timer.Stop(); // 静止后不再空转；数据刷新由 RefreshContent 单独出一帧
         }
 
-        private void Place()
+        /// <summary>按当前动画状态合成一帧（离屏截图也用它）。</summary>
+        internal Bitmap ComposeFrame(long now)
         {
-            float k = _show.Value();
-            int dy = (int)Math.Round((1 - k) * S(14));
-            Location = new Point((int)Math.Round(_x.Value()), _baseY + dy);
-            Opacity = Math.Clamp(_fade.Value(), 0, 1);
-            UpdateRegion();
+            if (_cardDirty || _card == null) { RenderCard(); _cardDirty = false; }
+            _frame ??= new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
+            var tk = Gx.For(_dark);
+            using var g = Graphics.FromImage(_frame);
+            g.Clear(Color.Transparent);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            int bodyH = S(H);
+            // 弹出时卡片从 .96 放大（以指向箭头所在的底边为原点）
+            float sc = 0.96f + 0.04f * Math.Clamp(_show.Value(now), 0, 1.2f);
+            float cw = _card!.Width * sc, ch = _card.Height * sc;
+            g.DrawImage(_card, new RectangleF(Pad + (S(W) - cw) / 2f, Pad + bodyH - ch, cw, ch));
+            // 指向箭头：盖住卡片底边描边，再补两条斜边
+            float cx = Pad + Math.Clamp(_caret.Value(now), S(22), S(W) - S(22));
+            float top = Pad + bodyH - 1.5f, tip = Pad + bodyH + S(Caret);
+            var tri = new[] { new PointF(cx - S(Caret + 1), top), new PointF(cx, tip), new PointF(cx + S(Caret + 1), top) };
+            using (var fill = new SolidBrush(tk.Float)) g.FillPolygon(fill, tri);
+            using (var pen = new Pen(tk.Line, 1f)) g.DrawLines(pen, tri);
+            return _frame;
         }
 
-        private float _lastCaret = float.NaN;
-        private void UpdateRegion()
+        private void Present(long now)
         {
-            float c = _caret.Value();
-            if (Math.Abs(c - _lastCaret) < 0.5f && Region != null) return;
-            _lastCaret = c;
-            using var path = UIUtils.RoundRect(new Rectangle(0, 0, Width, S(H)), S(16));
-            float cx = Math.Clamp(c, S(22), Width - S(22));
-            path.AddPolygon(new[] { new PointF(cx - S(Caret + 1), S(H) - 1), new PointF(cx, S(H) + S(Caret)), new PointF(cx + S(Caret + 1), S(H) - 1) });
-            path.FillMode = FillMode.Winding;
-            Region = new Region(path);
-        }
-
-        protected override void OnPaintBackground(PaintEventArgs e) { }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            try { Paint(e.Graphics); }
+            try
+            {
+                var frame = ComposeFrame(now);
+                float k = Math.Clamp(_show.Value(now), 0, 1);
+                var pos = new Point((int)Math.Round(_x.Value(now)) - Pad, _baseY - Pad + (int)Math.Round((1 - k) * S(14)));
+                byte alpha = (byte)Math.Round(Math.Clamp(_fade.Value(now), 0, 1) * 255);
+                Layered.Commit(Handle, frame, pos, alpha);
+            }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[TaskbarFlyout] " + ex.Message); }
         }
 
-        private void Paint(Graphics g)
+        /// <summary>
+        /// 卡片内容先画在不透明底上（ClearType 文字才清晰），再用圆角路径抠出、带抗锯齿边缘贴到透明位图里。
+        /// </summary>
+        private void RenderCard()
         {
             var tk = Gx.For(_dark);
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-            g.Clear(tk.Float);
-            var body = new Rectangle(0, 0, Width, S(H));
-            GxDraw.RoundStroke(g, body, S(16), tk.Line);
+            int w = S(W), h = S(H);
+            using var opaque = new Bitmap(w, h, PixelFormat.Format32bppRgb);
+            using (var g = Graphics.FromImage(opaque))
+            {
+                g.Clear(tk.Float);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+                PaintContent(g, w);
+            }
+            _card ??= new Bitmap(w, h, PixelFormat.Format32bppPArgb);
+            using var cg = Graphics.FromImage(_card);
+            cg.Clear(Color.Transparent);
+            cg.SmoothingMode = SmoothingMode.AntiAlias;
+            using var path = UIUtils.RoundRect(new Rectangle(0, 0, w - 1, h - 1), S(16));
+            using (var tb = new TextureBrush(opaque)) cg.FillPath(tb, path);
+            using var pen = new Pen(tk.Line, 1f);
+            cg.DrawPath(pen, path);
+        }
 
-            // 弹出时内容从 .96 放大
-            float sc = 0.96f + 0.04f * _show.Value();
-            g.TranslateTransform(Width / 2f, S(H)); g.ScaleTransform(sc, sc); g.TranslateTransform(-Width / 2f, -S(H));
+        protected override void OnPaintBackground(PaintEventArgs e) { }
+        protected override void OnPaint(PaintEventArgs e) { }
+
+        private void PaintContent(Graphics g, int Width)
+        {
+            var tk = Gx.For(_dark);
 
             int x = S(16), y = S(16), w = Width - S(32);
             GxDraw.Text(g, _title, Gx.F(12, true), new Rectangle(x, y, w, S(18)), tk.Text2);
@@ -245,8 +289,46 @@ namespace LiteMonitor.src.UI.Graphite
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) _timer.Dispose();
+            if (disposing) { _timer.Dispose(); _card?.Dispose(); _frame?.Dispose(); }
             base.Dispose(disposing);
+        }
+
+        /// <summary>把预乘 Alpha 位图连同位置、整体透明度一次提交给分层窗口。</summary>
+        internal static class Layered
+        {
+            public static bool Commit(IntPtr hwnd, Bitmap bmp, Point pos, byte alpha)
+            {
+                IntPtr screenDc = GetDC(IntPtr.Zero), memDc = CreateCompatibleDC(screenDc);
+                IntPtr hBmp = IntPtr.Zero, old = IntPtr.Zero;
+                try
+                {
+                    hBmp = bmp.GetHbitmap(Color.FromArgb(0));
+                    old = SelectObject(memDc, hBmp);
+                    var size = new SIZE { cx = bmp.Width, cy = bmp.Height };
+                    var src = new POINT { X = 0, Y = 0 };
+                    var dst = new POINT { X = pos.X, Y = pos.Y };
+                    var blend = new BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = alpha, AlphaFormat = 1 };
+                    return UpdateLayeredWindow(hwnd, screenDc, ref dst, ref size, memDc, ref src, 0, ref blend, 2);
+                }
+                finally
+                {
+                    if (old != IntPtr.Zero) SelectObject(memDc, old);
+                    if (hBmp != IntPtr.Zero) DeleteObject(hBmp);
+                    DeleteDC(memDc);
+                    ReleaseDC(IntPtr.Zero, screenDc);
+                }
+            }
+
+            [StructLayout(LayoutKind.Sequential)] private struct SIZE { public int cx, cy; }
+            [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
+            [StructLayout(LayoutKind.Sequential, Pack = 1)] private struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
+            [DllImport("user32.dll", SetLastError = true)] private static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
+            [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
+            [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+            [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+            [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
+            [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
+            [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr hObject);
         }
     }
 }

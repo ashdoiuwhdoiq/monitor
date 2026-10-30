@@ -34,7 +34,7 @@ namespace LiteMonitor
         private int _hoverCol = -1;
         private long _hoverSince;
         private long _leftAt = -1;
-        private Bitmap? _lastFrame, _swapFrom;
+        private Bitmap? _frameBmp, _contentBmp, _swapFrom; // 逐帧复用，不再每帧新建两张整条位图再复制一份
         private TaskbarFlyout? _flyout;
         
         // 公开属性
@@ -127,7 +127,7 @@ namespace LiteMonitor
                 return;
             }
 
-            using var bmp = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            var bmp = Reuse(ref _frameBmp);
             bool rendered;
             try
             {
@@ -137,10 +137,11 @@ namespace LiteMonitor
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                 g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
                 DrawPill(g);
-                using (var content = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                var content = Reuse(ref _contentBmp);
                 {
                     using (var cg = Graphics.FromImage(content))
                     {
+                        cg.Clear(Color.Transparent);
                         cg.SmoothingMode = SmoothingMode.HighQuality;
                         cg.PixelOffsetMode = PixelOffsetMode.HighQuality;
                         TaskbarRenderer.BreathClock = Motion.Now;
@@ -157,8 +158,6 @@ namespace LiteMonitor
                     else
                     {
                         g.DrawImageUnscaled(content, 0, 0);
-                        _lastFrame?.Dispose();
-                        _lastFrame = (Bitmap)content.Clone();
                     }
                 }
                 rendered = true;
@@ -185,6 +184,16 @@ namespace LiteMonitor
         }
 
         private bool _layeredResetTried;
+
+        private Bitmap Reuse(ref Bitmap? b)
+        {
+            if (b == null || b.Width != Width || b.Height != Height)
+            {
+                b?.Dispose();
+                b = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            }
+            return b;
+        }
 
         private static void DrawFaded(Graphics g, Bitmap bmp, float dy, float alpha)
         {
@@ -258,9 +267,12 @@ namespace LiteMonitor
                 ShowFlyout(_hoverCol);
             if (_hoverCol < 0 && _leftAt >= 0 && now - _leftAt >= 140) { _flyout?.HideFlyout(); _flyoutCol = -1; _leftAt = -1; }
 
-            if (dirty || TaskbarRenderer.HasBreathing || _pillX.IsRunning(now) || _pillW.IsRunning(now) || _pillA.IsRunning(now) || _swap.IsRunning(now))
+            bool animating = _pillX.IsRunning(now) || _pillW.IsRunning(now) || _pillA.IsRunning(now) || _swap.IsRunning(now);
+            if (dirty || animating || TaskbarRenderer.HasBreathing)
                 Redraw();
             if (_swapFrom != null && !_swap.IsRunning(now)) { _swapFrom.Dispose(); _swapFrom = null; Redraw(); }
+            // 有动画时 ~60fps（滑动的高亮胶囊才跟手）；平时 30fps 只轮询指针、画呼吸点
+            _fx.Interval = animating || dirty ? 15 : 33;
         }
 
         private int _flyoutCol = -1;
@@ -283,9 +295,9 @@ namespace LiteMonitor
         /// <summary>单击任务栏条：在单行 / 双行之间切换，旧画面淡出上移、新画面淡入（.55s）。</summary>
         private void ToggleLines()
         {
-            if (_lastFrame == null) return;
+            if (_contentBmp == null) return;
             _swapFrom?.Dispose();
-            _swapFrom = (Bitmap)_lastFrame.Clone();
+            _swapFrom = (Bitmap)_contentBmp.Clone();
             _cfg.TaskbarSingleLine = !_cfg.TaskbarSingleLine;
             try { _cfg.Save(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[TaskbarForm] " + ex.Message); }
             _ui.RebuildTaskbarColumns();
@@ -308,7 +320,8 @@ namespace LiteMonitor
                 _fx.Dispose();
                 _clickTimer.Dispose();
                 _flyout?.Dispose();
-                _lastFrame?.Dispose();
+                _frameBmp?.Dispose();
+                _contentBmp?.Dispose();
                 _swapFrom?.Dispose();
             }
             base.Dispose(disposing);

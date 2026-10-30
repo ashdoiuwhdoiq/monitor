@@ -91,11 +91,11 @@ namespace LiteMonitor.src.UI.Graphite
             }
             else if (_view == "week")
             {
-                for (int e = _days.Count; e > 0; e -= 7)
+                // 按自然周（周一开始）汇总，每根柱子是一整周的合计
+                foreach (var grp in _days.GroupBy(d => d.Date.AddDays(-(((int)d.Date.DayOfWeek + 6) % 7))))
                 {
-                    var part = _days.Skip(Math.Max(0, e - 7)).Take(e - Math.Max(0, e - 7)).ToList();
-                    var a = part[0].Date;
-                    ps.Insert(0, new Period { Label = $"{a.Month}/{a.Day}", Full = $"{a.Month}月{a.Day}日起一周", Days = part });
+                    var a = grp.Key; var b = a.AddDays(6);
+                    ps.Add(new Period { Label = $"{a.Month}/{a.Day}", Full = $"{a.Month}月{a.Day}日 – {b.Month}月{b.Day}日", Days = grp.ToList() });
                 }
                 if (ps.Count > 21) ps = ps.Skip(ps.Count - 21).ToList();
             }
@@ -108,6 +108,8 @@ namespace LiteMonitor.src.UI.Graphite
         }
 
         private void ReplayBars() { _barAnimKey++; Invalidate(); }
+
+        private string Unit => _view == "week" ? "周" : _view == "month" ? "月" : "天";
 
         private static (string v, string u) Gb(double gb)
         {
@@ -137,25 +139,31 @@ namespace LiteMonitor.src.UI.Graphite
 
             var modeR = new Rectangle(x0 + cw - S(32), y0 + S(8), S(32), S(32));
             ModeButton(g, modeR);
-            var segR = new Rectangle(modeR.X - S(14) - S(56 * 3 + 6), y0 + S(10), S(56 * 3 + 6), S(34));
-            string[] views = { "day", "week", "month" };
-            Seg(g, "view", segR, new[] { "日", "周", "月" }, Array.IndexOf(views, _view), i =>
+            var segR = new Rectangle(modeR.X - S(14) - S(56 * 4 + 6), y0 + S(10), S(56 * 4 + 6), S(34));
+            string[] views = { "day", "week", "month", "total" };
+            Seg(g, "view", segR, new[] { "日", "周", "月", "累计" }, Array.IndexOf(views, _view), i =>
             {
-                _view = views[i]; _hover = -1; _lock = -1; ReplayBars();
+                _view = views[i]; _hover = -1; _lock = -1; _cumHover = -1; ReplayBars();
             });
+
+            if (_view == "total") return DrawTotalView(g, x0, y0, cw);
 
             // ===== 大号数字（补间到当前时段或锁定时段）=====
             int hy = y0 + S(74);
             double sumDn, sumUp; int dcount;
             var target = _lock >= 0 && _lock < n ? new List<Period> { ps[_lock] } : ps;
             sumDn = target.Sum(p => p.Down); sumUp = target.Sum(p => p.Up);
-            dcount = target.Sum(p => p.Days.Count(d => !d.Missing));
+            // 平均值按当前视图的时段算：日视图除以有记录的天数，周 / 月视图除以有记录的周数 / 月数
+            dcount = _view == "day" ? target.Sum(p => p.Days.Count(d => !d.Missing)) : target.Count(p => p.Days.Any(d => !d.Missing));
             double avg = dcount > 0 ? (sumDn + sumUp) / dcount : 0;
             float dDn = A("hero.dn", (float)sumDn, 600, Motion.Out), dUp = A("hero.up", (float)sumUp, 600, Motion.Out), dAvg = A("hero.avg", (float)avg, 600, Motion.Out);
             int hx = x0;
             hx = HeroBlock(g, hx, hy, "下载", tk.Acc, dDn, tk.Text) + S(44);
             hx = HeroBlock(g, hx, hy, "上传", tk.Up, dUp, tk.Text) + S(44);
-            HeroBlock(g, hx, hy, _lock >= 0 && _view == "day" ? "当日合计" : "日均", null, dAvg, tk.Muted);
+            string avgLabel = _lock >= 0 && _lock < n
+                ? (_view == "day" ? "当日合计" : _view == "week" ? "本周合计" : "该月合计")
+                : (_view == "day" ? "日均" : _view == "week" ? "周均" : "月均");
+            HeroBlock(g, hx, hy, avgLabel, null, dAvg, tk.Muted);
 
             string ctx = _lock >= 0 && _lock < n ? $"已锁定 {ps[_lock].Full} · 点空白处取消" : _view == "day" ? "近 30 天" : _view == "week" ? $"近 {n} 周" : $"全部 {n} 个月";
             var cf = Gx.F(12);
@@ -241,9 +249,10 @@ namespace LiteMonitor.src.UI.Graphite
             {
                 var tp = ps[tipIdx];
                 float center = plot.X + slotW * tipIdx + slotW / 2;
-                float tipX = Math.Clamp(center + (center > card.X + card.Width * 0.7f ? -S(216) : S(16)), card.X + S(8), card.Right - S(208));
+                int tipW = S(_view == "week" ? 230 : 200);
+                float tipX = Math.Clamp(center + (center > card.X + card.Width * 0.7f ? -tipW - S(16) : S(16)), card.X + S(8), card.Right - tipW - S(8));
                 float tx = A("tip.x", tipX, 450, new Ease(.34, 1.2, .64, 1));
-                DrawTip(g, tp, new Rectangle((int)tx, card.Y + S(12), S(200), S(120)), tipShow, n > 6 && tp.Total > mean + 2 * sd);
+                DrawTip(g, tp.Full, tp.Up, tp.Down, new Rectangle((int)tx, card.Y + S(12), S(_view == "week" ? 230 : 200), S(120)), tipShow, n > 6 && tp.Total > mean + 2 * sd);
             }
 
             // ===== 下方：热力日历 + 前五名 =====
@@ -277,7 +286,7 @@ namespace LiteMonitor.src.UI.Graphite
             return x + vw + S(4) + GxDraw.Measure(g, u, Gx.F(13));
         }
 
-        private void DrawTip(Graphics g, Period p, Rectangle r, float show, bool peak)
+        private void DrawTip(Graphics g, string title, double up, double down, Rectangle r, float show, bool peak, string totalLabel = "合计")
         {
             var tk = Tk;
             var st = g.Save();
@@ -289,10 +298,10 @@ namespace LiteMonitor.src.UI.Graphite
             GxDraw.RoundStroke(g, r, S(12), Color.FromArgb(a, tk.Line));
             Color F(Color c) => Color.FromArgb(a, c);
             int x = r.X + S(14), y = r.Y + S(12), w = r.Width - S(28);
-            GxDraw.Text(g, p.Full, Gx.F(13, true), new Rectangle(x, y, w, S(18)), F(tk.Text));
+            GxDraw.Text(g, title, Gx.F(13, true), new Rectangle(x, y, w, S(18)), F(tk.Text));
             if (peak)
             {
-                int pw = GxDraw.Measure(g, p.Full, Gx.F(13, true));
+                int pw = GxDraw.Measure(g, title, Gx.F(13, true));
                 var chip = new Rectangle(x + pw + S(8), y + S(1), S(58), S(16));
                 GxDraw.Round(g, chip, S(5), Color.FromArgb(a, Gx.Mix(tk.Float, tk.Warn, 0.16f)));
                 GxDraw.Text(g, "异常偏高", Gx.F(10), chip, F(tk.Warn), TextFormatFlags.HorizontalCenter);
@@ -304,10 +313,10 @@ namespace LiteMonitor.src.UI.Graphite
                 GxDraw.Text(g, label, Gx.F(12), new Rectangle(lx, yy, S(80), S(18)), F(lc));
                 GxDraw.Text(g, val, Gx.F(12, false, true), new Rectangle(x, yy, w, S(18)), F(tk.Text), TextFormatFlags.Right);
             }
-            Row(y + S(26), tk.Acc, "下载", Gbs(p.Down), tk.Text2);
-            Row(y + S(50), tk.Up, "上传", Gbs(p.Up), tk.Text2);
+            Row(y + S(26), tk.Acc, "下载", Gbs(down), tk.Text2);
+            Row(y + S(50), tk.Up, "上传", Gbs(up), tk.Text2);
             using (var pen = new Pen(F(tk.Line))) g.DrawLine(pen, x, y + S(76), x + w, y + S(76));
-            Row(y + S(82), null, "合计", Gbs(p.Total), tk.Muted);
+            Row(y + S(82), null, totalLabel, Gbs(up + down), tk.Muted);
             g.Restore(st);
         }
 
@@ -395,30 +404,194 @@ namespace LiteMonitor.src.UI.Graphite
         {
             var tk = Tk;
             GxDraw.Card(g, card, tk);
-            GxDraw.Text(g, "流量最高的 5 天", Gx.F(13, true), new Rectangle(card.X + S(20), card.Y + S(18), S(300), S(18)), tk.Text);
-            var ranked = _days.Where(d => !d.Missing).OrderByDescending(d => d.Total).Take(5).ToList();
-            double topMax = ranked.Count > 0 ? ranked[0].Total : 1;
+            GxDraw.Text(g, $"流量最高的 5 {(_view == "day" ? "天" : _view == "week" ? "周" : "个月")}", Gx.F(13, true), new Rectangle(card.X + S(20), card.Y + S(18), S(300), S(18)), tk.Text);
+            // 日视图排的是每一天；周 / 月视图排的是每周 / 每月的合计
+            var source = _view == "day"
+                ? _days.Where(d => !d.Missing).Select(d => (Label: $"{d.Date.Month}月{d.Date.Day}日", d.Total, Key: d.Index, Bar: -2)).ToList()
+                : ps.Select((pp, i) => (Label: _view == "week" ? pp.Label + " 起" : pp.Full, pp.Total, Key: -1 - i, Bar: i)).Where(t => t.Total > 0).ToList();
+            var ranked = source.OrderByDescending(t => t.Total).Take(5).ToList();
+            double topMax = ranked.Count > 0 ? Math.Max(1e-9, ranked[0].Total) : 1;
             int y = card.Y + S(46);
             TopHot = false;
             for (int k = 0; k < ranked.Count; k++)
             {
                 var d = ranked[k];
+                int barIdx = d.Bar >= -1 ? d.Bar : BarIndexOf(_days[d.Key], ps);
                 var row = new Rectangle(card.X + S(14), y, card.Width - S(28), S(34));
-                bool hot = Hot(row) || _heatHover == d.Index;
-                if (Hot(row)) { TopHot = true; if (_heatHover != d.Index) { _heatHover = d.Index; _hover = BarIndexOf(d, ps); } }
+                bool hot = Hot(row) || (d.Key >= 0 ? _heatHover == d.Key : _hover == barIdx);
+                if (Hot(row))
+                {
+                    TopHot = true;
+                    if (d.Key >= 0) { if (_heatHover != d.Key) { _heatHover = d.Key; _hover = barIdx; } }
+                    else _hover = barIdx;
+                }
                 float rise = AFrom($"top.rise.{_barAnimKey}.{k}", 0, 1, 500, Motion.Out, k * 50);
                 float shift = A("top.shift." + k, hot ? 1 : 0, 350, Motion.Out);
                 var r = row; r.Offset((int)(S(3) * shift), (int)((1 - rise) * S(8)));
                 if (shift > 0.01f) GxDraw.Round(g, r, S(10), Gx.Mix(tk.Card, tk.Hover, shift));
                 Color Fade(Color c) => Gx.Mix(tk.Card, c, rise);
                 GxDraw.Text(g, (k + 1).ToString(), Gx.F(12, false, true), new Rectangle(r.X + S(10), r.Y, S(14), r.Height), Fade(tk.Faint));
-                GxDraw.Text(g, $"{d.Date.Month}月{d.Date.Day}日", Gx.F(13), new Rectangle(r.X + S(36), r.Y, S(76), r.Height), Fade(tk.Text));
-                var bar = new Rectangle(r.X + S(124), r.Y + r.Height / 2 - S(2), r.Width - S(124) - S(100), S(4));
+                int labelW = _view == "month" ? S(96) : S(76);
+                GxDraw.Text(g, d.Label, Gx.F(13), new Rectangle(r.X + S(36), r.Y, labelW, r.Height), Fade(tk.Text));
+                int bx = r.X + S(48) + labelW;
+                var bar = new Rectangle(bx, r.Y + r.Height / 2 - S(2), r.Right - S(100) - bx, S(4));
                 int bw = (int)(bar.Width * (d.Total / topMax) * rise);
                 GxDraw.Round(g, new Rectangle(bar.X, bar.Y, bw, bar.Height), S(2), Fade(tk.Acc));
                 GxDraw.Text(g, Gbs(d.Total), Gx.F(13, false, true), new Rectangle(r.Right - S(90), r.Y, S(80), r.Height), Fade(tk.Text), TextFormatFlags.Right);
-                var dd = d;
-                Hit("top." + k, row, () => { int bi = BarIndexOf(dd, ps); if (bi >= 0) { _lock = _lock == bi ? -1 : bi; Invalidate(); } });
+                int bi = barIdx;
+                Hit("top." + k, row, () => { if (bi >= 0) { _lock = _lock == bi ? -1 : bi; Invalidate(); } });
+                y += S(36);
+            }
+        }
+
+        private int _cumHover = -1;
+
+        /// <summary>
+        /// 累计视图：自开始记录以来的总量；主图是逐日累计曲线（从左到右描出，900ms），
+        /// 悬停出十字线与弹簧浮窗；下方左侧沿用热力日历，右侧是每月合计。
+        /// </summary>
+        private int DrawTotalView(Graphics g, int x0, int y0, int cw)
+        {
+            var tk = Tk;
+            int hy = y0 + S(74);
+            double allDn = _days.Sum(d => d.Down), allUp = _days.Sum(d => d.Up);
+            int recDays = _days.Count(d => !d.Missing);
+            float dDn = A("hero.dn", (float)allDn, 600, Motion.Out), dUp = A("hero.up", (float)allUp, 600, Motion.Out), dAll = A("hero.avg", (float)(allDn + allUp), 600, Motion.Out);
+            int hx = x0;
+            hx = HeroBlock(g, hx, hy, "累计下载", tk.Acc, dDn, tk.Text) + S(44);
+            hx = HeroBlock(g, hx, hy, "累计上传", tk.Up, dUp, tk.Text) + S(44);
+            HeroBlock(g, hx, hy, "累计合计", null, dAll, tk.Muted);
+
+            string ctx = _days.Count == 0 ? "暂无记录" : $"自 {_days[0].Date:yyyy年M月d日} 起 · {recDays} 天有记录";
+            var cf = Gx.F(12);
+            int ctxW = GxDraw.Measure(g, ctx, cf) + S(20);
+            var ctxR = new Rectangle(x0 + cw - ctxW, hy + S(28), ctxW, S(26));
+            GxDraw.Round(g, ctxR, ctxR.Height / 2f, tk.Hover);
+            GxDraw.Text(g, ctx, cf, ctxR, tk.Text2, TextFormatFlags.HorizontalCenter);
+
+            var card = new Rectangle(x0, hy + S(64) + S(22), cw, S(300));
+            GxDraw.Card(g, card, tk);
+            GxDraw.Text(g, "累计曲线", Gx.F(12), new Rectangle(card.X + S(20), card.Y + S(14), S(200), S(16)), tk.Muted);
+            var plot = new Rectangle(card.X + S(56), card.Y + S(40), card.Width - S(76), card.Height - S(74));
+            int n = _days.Count;
+            var cDn = new double[n]; var cUp = new double[n];
+            for (int i = 0; i < n; i++) { cDn[i] = (i > 0 ? cDn[i - 1] : 0) + _days[i].Down; cUp[i] = (i > 0 ? cUp[i - 1] : 0) + _days[i].Up; }
+            double maxV = n > 0 ? Math.Max(cDn[^1], cUp[^1]) : 1;
+            // 刻度贴着数据取整，避免顶部空出一半
+            double step = NiceStep(maxV / 4);
+            int ticks = Math.Max(1, (int)Math.Ceiling(maxV / step));
+            double top = step * ticks;
+            for (int k = 0; k <= ticks; k++)
+            {
+                int gy = plot.Bottom - (int)(plot.Height * k / (double)ticks);
+                using (var pen = new Pen(tk.Line2)) g.DrawLine(pen, plot.X, gy, plot.Right, gy);
+                GxDraw.Text(g, k == 0 ? "0" : Gbs(step * k), Gx.F(11), new Rectangle(card.X, gy - S(8), S(46), S(16)), tk.Faint, TextFormatFlags.Right);
+            }
+            if (n >= 2)
+            {
+                PointF P(int i, double v) => new(plot.X + plot.Width * i / (float)(n - 1), plot.Bottom - (float)(plot.Height * v / Math.Max(1e-9, top)));
+                var pDn = Enumerable.Range(0, n).Select(i => P(i, cDn[i])).ToArray();
+                var pUp = Enumerable.Range(0, n).Select(i => P(i, cUp[i])).ToArray();
+                // 从左到右描出
+                float rev = AFrom($"cum.rev.{_barAnimKey}", 0, 1, 900, Motion.InOut);
+                var st = g.Save();
+                g.SetClip(new RectangleF(plot.X - S(4), card.Y, (plot.Width + S(8)) * rev, card.Height));
+                using (var path = new System.Drawing.Drawing2D.GraphicsPath())
+                {
+                    path.AddLines(pDn);
+                    path.AddLine(pDn[^1].X, plot.Bottom, pDn[0].X, plot.Bottom);
+                    path.CloseFigure();
+                    using var fill = new System.Drawing.Drawing2D.LinearGradientBrush(new Rectangle(plot.X, plot.Y - 1, plot.Width, plot.Height + 2),
+                        Color.FromArgb(70, tk.Acc), Color.FromArgb(0, tk.Acc), 90f);
+                    g.FillPath(fill, path);
+                }
+                using (var pen = new Pen(tk.Acc, Sf(2f)) { LineJoin = System.Drawing.Drawing2D.LineJoin.Round }) g.DrawLines(pen, pDn);
+                using (var pen = new Pen(tk.Up, Sf(2f)) { LineJoin = System.Drawing.Drawing2D.LineJoin.Round }) g.DrawLines(pen, pUp);
+                g.Restore(st);
+
+                // 横轴：首尾加中间三个日期
+                for (int k = 0; k <= 4; k++)
+                {
+                    int i = (int)Math.Round((n - 1) * k / 4.0);
+                    var d = _days[i].Date;
+                    var flags = k == 0 ? TextFormatFlags.Left : k == 4 ? TextFormatFlags.Right : TextFormatFlags.HorizontalCenter;
+                    int lx = k == 0 ? (int)pDn[i].X : k == 4 ? (int)pDn[i].X - S(80) : (int)pDn[i].X - S(40);
+                    GxDraw.Text(g, $"{d.Month}/{d.Day}", Gx.F(11, false, true), new Rectangle(lx, plot.Bottom + S(8), S(80), S(16)), tk.Faint, flags);
+                }
+
+                // 悬停：十字线 + 两个点 + 浮窗
+                if (Hot(plot))
+                {
+                    var m = ContentMouse;
+                    _cumHover = Math.Clamp((int)Math.Round((m.X - plot.X) / (float)plot.Width * (n - 1)), 0, n - 1);
+                }
+                else _cumHover = -1;
+                float show = A("cum.tip", _cumHover >= 0 ? 1 : 0, _cumHover >= 0 ? 400 : 200, _cumHover >= 0 ? Motion.Spring : Motion.Out);
+                int hi = _cumHover >= 0 ? _cumHover : _lastCumHover;
+                if (_cumHover >= 0) _lastCumHover = _cumHover;
+                if (hi >= 0 && hi < n && show > 0.01f)
+                {
+                    float cx = A("cum.x", pDn[hi].X, 300, new Ease(.34, 1.2, .64, 1));
+                    using (var pen = new Pen(Color.FromArgb((int)(140 * Math.Clamp(show, 0, 1)), tk.Muted)) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash })
+                        g.DrawLine(pen, cx, plot.Y, cx, plot.Bottom);
+                    foreach (var (pt, c) in new[] { (pDn[hi], tk.Acc), (pUp[hi], tk.Up) })
+                    {
+                        float r = S(4) * Math.Clamp(show, 0, 1.2f);
+                        using var b = new SolidBrush(c);
+                        using var ring = new Pen(tk.Card, Sf(2f));
+                        g.FillEllipse(b, cx - r, pt.Y - r, r * 2, r * 2);
+                        g.DrawEllipse(ring, cx - r, pt.Y - r, r * 2, r * 2);
+                    }
+                    var d = _days[hi].Date;
+                    float tipX = Math.Clamp(cx + (cx > card.X + card.Width * 0.7f ? -S(216) : S(16)), card.X + S(8), card.Right - S(208));
+                    DrawTip(g, $"截至 {d.Month}月{d.Day}日", cUp[hi], cDn[hi], new Rectangle((int)tipX, card.Y + S(12), S(200), S(120)), show, false, "累计");
+                }
+            }
+            else
+            {
+                GxDraw.Text(g, "记录满两天后显示累计曲线", Gx.F(13), plot, tk.Faint, TextFormatFlags.HorizontalCenter);
+            }
+
+            int by = card.Bottom + S(20);
+            var heat = new Rectangle(x0, by, cw - S(420) - S(20), S(236));
+            var right = new Rectangle(heat.Right + S(20), by, S(420), S(236));
+            DrawHeat(g, heat, new List<Period>());
+            DrawMonths(g, right);
+            return ClientSize.Height;
+        }
+
+        private int _lastCumHover = -1;
+
+        /// <summary>累计视图右下：最近 5 个月的月合计（下载 / 上传分段条）。</summary>
+        private void DrawMonths(Graphics g, Rectangle card)
+        {
+            var tk = Tk;
+            GxDraw.Card(g, card, tk);
+            GxDraw.Text(g, "每月合计", Gx.F(13, true), new Rectangle(card.X + S(20), card.Y + S(18), S(300), S(18)), tk.Text);
+            var months = _days.GroupBy(d => new { d.Date.Year, d.Date.Month })
+                .Select(gp => (Label: $"{gp.Key.Year}年{gp.Key.Month}月", Up: gp.Sum(d => d.Up), Down: gp.Sum(d => d.Down)))
+                .TakeLast(5).Reverse().ToList();
+            double mx = months.Count > 0 ? Math.Max(1e-9, months.Max(m => m.Up + m.Down)) : 1;
+            int y = card.Y + S(46);
+            for (int k = 0; k < months.Count; k++)
+            {
+                var m = months[k];
+                var row = new Rectangle(card.X + S(14), y, card.Width - S(28), S(34));
+                bool hot = Hot(row);
+                float rise = AFrom($"mon.rise.{_barAnimKey}.{k}", 0, 1, 500, Motion.Out, k * 50);
+                float shift = A("mon.shift." + k, hot ? 1 : 0, 350, Motion.Out);
+                var r = row; r.Offset((int)(S(3) * shift), (int)((1 - rise) * S(8)));
+                if (shift > 0.01f) GxDraw.Round(g, r, S(10), Gx.Mix(tk.Card, tk.Hover, shift));
+                Color Fade(Color c) => Gx.Mix(tk.Card, c, rise);
+                GxDraw.Text(g, m.Label, Gx.F(13), new Rectangle(r.X + S(10), r.Y, S(100), r.Height), Fade(tk.Text));
+                int bx = r.X + S(118);
+                var bar = new Rectangle(bx, r.Y + r.Height / 2 - S(2), r.Right - S(100) - bx, S(4));
+                int bwAll = (int)(bar.Width * ((m.Up + m.Down) / mx) * rise);
+                int bwUp = (int)(bwAll * (m.Up + m.Down > 0 ? m.Up / (m.Up + m.Down) : 0));
+                GxDraw.Round(g, new Rectangle(bar.X, bar.Y, bwAll, bar.Height), S(2), Fade(tk.Acc));
+                if (bwUp > 0) GxDraw.Round(g, new Rectangle(bar.X + bwAll - bwUp, bar.Y, bwUp, bar.Height), S(2), Fade(tk.Up));
+                GxDraw.Text(g, hot ? $"↓{Gbs(m.Down)} ↑{Gbs(m.Up)}" : Gbs(m.Up + m.Down), Gx.F(hot ? 11 : 13, false, true),
+                    new Rectangle(r.Right - S(170), r.Y, S(160), r.Height), Fade(tk.Text), TextFormatFlags.Right);
                 y += S(36);
             }
         }

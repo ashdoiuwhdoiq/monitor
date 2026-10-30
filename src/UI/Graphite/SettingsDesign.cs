@@ -446,25 +446,29 @@ namespace LiteMonitor.src.UI.Graphite
         {
             y = PageTitle(g, x, y, w, "任务栏", "嵌入任务栏的精简读数。使用逐像素透明绘制，文字边缘不再有灰色毛边。");
             var (k, yy) = BeginSection(g, x, y, w, null);
-            var rows = Card(g, x, yy, w, k, S(56), S(56), S(56), S(56), S(68), S(68));
+            var rows = Card(g, x, yy, w, k, S(56), S(56), S(68), S(56), S(56), S(68), S(68));
             RowLabel(g, rows[0], "在任务栏显示", null, k);
             SwitchAt(g, "tb.show", rows[0], D.ShowTaskbar, v => D.ShowTaskbar = v);
             RowLabel(g, rows[1], "布局", null, k);
             SegAt(g, "tb.layout", rows[1], new[] { "双行", "单行" }, D.TaskbarSingleLine ? 1 : 0, 64, i => D.TaskbarSingleLine = i == 1);
-            RowLabel(g, rows[2], "字号", null, k);
+            RowLabel(g, rows[2], "数字刷新", "任务栏读数多久换一次；走势与历史记录仍按采样频率", k);
+            int[] tbMs = { 1000, 2000, 3000, 5000 };
+            int tbIdx = Array.IndexOf(tbMs, D.TaskbarRefreshMs);
+            SegAt(g, "tb.refresh", rows[2], new[] { "1 秒", "2 秒", "3 秒", "5 秒" }, tbIdx < 0 ? 1 : tbIdx, 52, i => D.TaskbarRefreshMs = tbMs[i]);
+            RowLabel(g, rows[3], "字号", null, k);
             var style = D.GetStyle();
-            SliderAt(g, "tb.size", rows[2], 9, 14, 0.5, style.Size, $"{style.Size:0.#}pt", v =>
+            SliderAt(g, "tb.size", rows[3], 9, 14, 0.5, style.Size, $"{style.Size:0.#}pt", v =>
             {
                 EnsureCustomLayout();
                 D.TaskbarFontSize = (float)v;
             });
-            RowLabel(g, rows[3], "数值加粗", null, k);
-            SwitchAt(g, "tb.bold", rows[3], style.Bold, v => { EnsureCustomLayout(); D.TaskbarFontBold = v; });
-            RowLabel(g, rows[4], "跟随系统明暗", "任务栏切换为浅色时自动换用深色文字", k);
-            SwitchAt(g, "tb.follow", rows[4], !D.TaskbarCustomStyle, v => D.TaskbarCustomStyle = !v);
-            RowLabel(g, rows[5], "平滑文字边缘", "逐像素透明；若任务栏条显示异常可关闭，退回旧方式", k);
-            SwitchAt(g, "tb.alpha", rows[5], D.TaskbarPerPixelAlpha, v => D.TaskbarPerPixelAlpha = v);
-            return rows[5].Bottom;
+            RowLabel(g, rows[4], "数值加粗", null, k);
+            SwitchAt(g, "tb.bold", rows[4], style.Bold, v => { EnsureCustomLayout(); D.TaskbarFontBold = v; });
+            RowLabel(g, rows[5], "跟随系统明暗", "任务栏切换为浅色时自动换用深色文字", k);
+            SwitchAt(g, "tb.follow", rows[5], !D.TaskbarCustomStyle, v => D.TaskbarCustomStyle = !v);
+            RowLabel(g, rows[6], "平滑文字边缘", "逐像素透明；若任务栏条显示异常可关闭，退回旧方式", k);
+            SwitchAt(g, "tb.alpha", rows[6], D.TaskbarPerPixelAlpha, v => D.TaskbarPerPixelAlpha = v);
+            return rows[6].Bottom;
         }
 
         /// <summary>字号 / 加粗需要「自定义布局」才生效：首次修改时把当前预设的参数带过去。</summary>

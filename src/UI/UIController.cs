@@ -24,6 +24,7 @@ namespace LiteMonitor
         private const float CollapseTauMs = 110f;
         private const float LivePulseMs = 700f;
         private long _lastTickMs = -100000;
+        private long _lastTaskbarValueMs = -100000;
 
         // 竖向面板（Graphite 设计稿版式）
         private readonly GraphitePanel _panel = new GraphitePanel();
@@ -230,6 +231,11 @@ namespace LiteMonitor
                     }
 
                 // ② 更新横版 / 任务栏 (清理了冗余代码)
+                // 任务栏数字按 TaskbarRefreshMs 换一次（默认 2 秒），读起来不晃；走势线仍每次采样都记
+                long tbNow = _animClock.ElapsedMilliseconds;
+                bool tbDue = tbNow - _lastTaskbarValueMs >= Math.Max(_cfg.TaskbarRefreshMs, _cfg.RefreshMs) - 100;
+                if (tbDue) _lastTaskbarValueMs = tbNow;
+                bool forTaskbar = false;
                 void UpdateCol(Column col)
                 {
                     void UpdateItem(MetricItem it) 
@@ -239,14 +245,16 @@ namespace LiteMonitor
                         // [新增] Dashboard 实时更新 (横版/任务栏)
                         if (it.Key.StartsWith("DASH."))
                         {
+                             if (forTaskbar && !tbDue) return;
                              string dashKey = it.Key.Substring(5);
                              string val = InfoService.Instance.GetValue(dashKey);
                              it.TextValue = val;
                         }
                         else
                         {
-                            it.Value = _mon.Get(it.Key);
-                            if (it.Value.HasValue) it.PushHistory(it.Value.Value); // 任务栏浮卡的走势线
+                            float? v = _mon.Get(it.Key);
+                            if (v.HasValue) it.PushHistory(v.Value); // 任务栏浮卡的走势线
+                            if (!forTaskbar || tbDue || !it.Value.HasValue) it.Value = v;
                         }
                     }
                     UpdateItem(col.Top);
@@ -254,6 +262,7 @@ namespace LiteMonitor
                 }
                 
                 foreach (var col in _hxColsHorizontal) UpdateCol(col);
+                forTaskbar = true;
                 foreach (var col in _hxColsTaskbar) UpdateCol(col);
 
                 HardwareHistoryLogger.RecordSnapshot(_cfg, key => _mon.Get(key));
@@ -330,16 +339,17 @@ namespace LiteMonitor
                 foreach (var it in g.Items) moving |= it.Animate(dt, speed, t);
             }
 
-            void AnimCols(List<Column> cols)
+            void AnimCols(List<Column> cols, double sp)
             {
                 foreach (var col in cols)
                 {
-                    if (col.Top != null) moving |= col.Top.Animate(dt, speed, t);
-                    if (col.Bottom != null) moving |= col.Bottom.Animate(dt, speed, t);
+                    if (col.Top != null) moving |= col.Top.Animate(dt, sp, t);
+                    if (col.Bottom != null) moving |= col.Bottom.Animate(dt, sp, t);
                 }
             }
-            AnimCols(_hxColsHorizontal);
-            AnimCols(_hxColsTaskbar);
+            AnimCols(_hxColsHorizontal, speed);
+            // 任务栏直接显示采样值：不做数字滚动，否则一次更新会在一秒内闪过好几个中间值
+            AnimCols(_hxColsTaskbar, 1.0);
 
             _form.Invalidate();
             if (!moving) _animTimer.Stop();
