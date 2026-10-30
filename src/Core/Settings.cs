@@ -54,7 +54,7 @@ namespace LiteMonitor
 
         // ====== 任务栏 ======
         public bool ShowTaskbar { get; set; } = true;
-        public int TaskbarRefreshMs { get; set; } = 2000; // 任务栏数字多久换一次（采样仍按 RefreshMs，走势线不受影响）
+        public int TaskbarRefreshMs { get; set; } = 1000; // 任务栏数字多久换一次（不快于采样间隔 RefreshMs；走势线不受影响）
         public bool TaskbarPerPixelAlpha { get; set; } = true; // 任务栏条逐像素透明（文字无毛边）；失败时自动退回颜色键
         // ★★★ 新增：横条模式是否跟随任务栏布局？ ★★★
         public bool HorizontalFollowsTaskbar { get; set; } = false;

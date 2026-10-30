@@ -18,16 +18,21 @@ namespace LiteMonitor.src.UI.Graphite
 
         // 逐像素分层窗口：每帧一次 UpdateLayeredWindow 同时提交位置、整体透明度与画面，
         // 不再逐帧改 Opacity / Region（那会让系统整窗重新合成，滑动时明显掉帧）。
-        // 卡片内容只在数据或列变化时重画一次并缓存，动画帧只做缩放贴图 + 画指向箭头。
-        private readonly System.Windows.Forms.Timer _timer = new() { Interval = 15 };
+        // 帧由 VsyncPump 按显示器刷新率驱动（165Hz 屏就是 165fps），静止即停。
+        private readonly VsyncPump _pump;
         private readonly Tween _show = new(0), _fade = new(0), _x = new(0), _caret = new(0);
         private MetricItem? _a, _b;
         private string _title = "";
         private bool _dark = true;
         private int _baseY;
         private bool _want;
-        private Bitmap? _card, _frame;
+        private Bitmap? _card, _frame, _opaque;
         private bool _cardDirty = true;
+
+        // 内容入场：标题 → 数值从 0 数上来 → 走势从左往右描出 → 图例，依次错开
+        private long _introStart = long.MinValue / 2;
+        private float _introK = 1f; // 1 = 首次弹出；切换列时整体加快
+        private const float IntroTotalMs = 900f;
 
         public TaskbarFlyout()
         {
@@ -36,7 +41,7 @@ namespace LiteMonitor.src.UI.Graphite
             StartPosition = FormStartPosition.Manual;
             TopMost = true;
             Size = new Size(S(W) + Pad * 2, S(H) + S(Caret) + Pad * 2);
-            _timer.Tick += (_, __) => Frame();
+            _pump = new VsyncPump(this, Frame);
         }
 
         private static int S(float px) => (int)Math.Round(px * UIUtils.ScaleFactor);
@@ -56,7 +61,8 @@ namespace LiteMonitor.src.UI.Graphite
         /// <summary>显示或切换到某一列。columnScreen 为该列在屏幕上的区域，taskbar 为任务栏条区域。</summary>
         public void ShowFor(MetricItem? a, MetricItem? b, string title, Rectangle columnScreen, Rectangle taskbar, bool dark)
         {
-            if (a != _a || b != _b || title != _title || dark != _dark) _cardDirty = true;
+            bool changed = a != _a || b != _b || title != _title || dark != _dark;
+            if (changed) _cardDirty = true;
             _a = a; _b = b; _title = title; _dark = dark;
             var bounds = Screen.FromRectangle(taskbar).Bounds;
             bool bottom = taskbar.Top > bounds.Top + bounds.Height / 2;
@@ -70,6 +76,11 @@ namespace LiteMonitor.src.UI.Graphite
             {
                 _x.Set(left, 500, new Ease(.34, 1.2, .64, 1));
                 _caret.Set(cx - left, 500, new Ease(.34, 1.2, .64, 1));
+            }
+            if (appearing || changed)
+            {
+                _introStart = Motion.Now;
+                _introK = appearing ? 1f : 0.6f;
             }
             _show.Set(1, 500, new Ease(.34, 1.45, .64, 1));
             _fade.Set(1, 220, Motion.Out);
@@ -91,30 +102,33 @@ namespace LiteMonitor.src.UI.Graphite
         {
             if (!Visible) return;
             _cardDirty = true;
-            if (!_timer.Enabled) Frame();
+            if (!_pump.Running) Frame();
         }
 
-        /// <summary>立刻出第一帧并以 ~60fps 继续（之前静止时降到 250ms 一帧，切列时首帧要等满这段，所以卡）。</summary>
+        /// <summary>立刻出第一帧，之后每个垂直同步一帧。</summary>
         private void Kick()
         {
-            _timer.Interval = 15;
             Frame();
-            _timer.Start();
+            _pump.Start();
         }
+
+        private bool IntroRunning(long now) => Motion.DurationScale > 0 && now - _introStart < IntroTotalMs * _introK * Motion.DurationScale;
 
         private void Frame()
         {
             long now = Motion.Now;
-            if (!_want && !_fade.IsRunning(now) && _fade.Value(now) <= 0.01f) { _timer.Stop(); Hide(); return; }
+            if (!_want && !_fade.IsRunning(now) && _fade.Value(now) <= 0.01f) { _pump.Stop(); Hide(); return; }
+            bool intro = IntroRunning(now);
+            if (intro) _cardDirty = true;
             Present(now);
-            bool moving = _show.IsRunning(now) || _x.IsRunning(now) || _caret.IsRunning(now) || _fade.IsRunning(now);
-            if (!moving) _timer.Stop(); // 静止后不再空转；数据刷新由 RefreshContent 单独出一帧
+            bool moving = intro || _show.IsRunning(now) || _x.IsRunning(now) || _caret.IsRunning(now) || _fade.IsRunning(now);
+            if (!moving) _pump.Stop(); // 静止后不再空转；数据刷新由 RefreshContent 单独出一帧
         }
 
         /// <summary>按当前动画状态合成一帧（离屏截图也用它）。</summary>
         internal Bitmap ComposeFrame(long now)
         {
-            if (_cardDirty || _card == null) { RenderCard(); _cardDirty = false; }
+            if (_cardDirty || _card == null) { RenderCard(now); _cardDirty = false; }
             _frame ??= new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
             var tk = Gx.For(_dark);
             using var g = Graphics.FromImage(_frame);
@@ -152,24 +166,24 @@ namespace LiteMonitor.src.UI.Graphite
         /// <summary>
         /// 卡片内容先画在不透明底上（ClearType 文字才清晰），再用圆角路径抠出、带抗锯齿边缘贴到透明位图里。
         /// </summary>
-        private void RenderCard()
+        private void RenderCard(long now)
         {
             var tk = Gx.For(_dark);
             int w = S(W), h = S(H);
-            using var opaque = new Bitmap(w, h, PixelFormat.Format32bppRgb);
-            using (var g = Graphics.FromImage(opaque))
+            _opaque ??= new Bitmap(w, h, PixelFormat.Format32bppRgb);
+            using (var g = Graphics.FromImage(_opaque))
             {
                 g.Clear(tk.Float);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-                PaintContent(g, w);
+                PaintContent(g, w, now);
             }
             _card ??= new Bitmap(w, h, PixelFormat.Format32bppPArgb);
             using var cg = Graphics.FromImage(_card);
             cg.Clear(Color.Transparent);
             cg.SmoothingMode = SmoothingMode.AntiAlias;
             using var path = UIUtils.RoundRect(new Rectangle(0, 0, w - 1, h - 1), S(16));
-            using (var tb = new TextureBrush(opaque)) cg.FillPath(tb, path);
+            using (var tb = new TextureBrush(_opaque)) cg.FillPath(tb, path);
             using var pen = new Pen(tk.Line, 1f);
             cg.DrawPath(pen, path);
         }
@@ -177,13 +191,30 @@ namespace LiteMonitor.src.UI.Graphite
         protected override void OnPaintBackground(PaintEventArgs e) { }
         protected override void OnPaint(PaintEventArgs e) { }
 
-        private void PaintContent(Graphics g, int Width)
+        /// <summary>入场分段进度：delay / dur 以首次弹出为准，切列时按 _introK 加快。</summary>
+        private float Stage(long now, float delay, float dur, Ease ease)
+        {
+            float k = _introK * Motion.DurationScale; // 「动效：关」时为 0，直接是最终状态
+            return ease.Eval(Motion.Progress(_introStart, delay * k, dur * k, now));
+        }
+
+        private void PaintContent(Graphics g, int Width, long now)
         {
             var tk = Gx.For(_dark);
+            Color Fade(Color c, float a) => Gx.Mix(tk.Float, c, Math.Clamp(a, 0, 1));
+            int Rise(float a) => (int)Math.Round((1 - Math.Clamp(a, 0, 1)) * S(6));
+
+            float aTitle = Stage(now, 0, 280, Motion.Out);
+            float aVals = Stage(now, 70, 380, Motion.Out);
+            float count = Stage(now, 70, 650, Motion.Out);
+            float reveal = Stage(now, 150, 720, Motion.InOut);
+            float aLegend = Stage(now, 380, 320, Motion.Out);
+            float dot = Stage(now, 760, 380, Motion.Spring);
 
             int x = S(16), y = S(16), w = Width - S(32);
-            GxDraw.Text(g, _title, Gx.F(12, true), new Rectangle(x, y, w, S(18)), tk.Text2);
-            GxDraw.Text(g, "近 40 秒", Gx.F(11), new Rectangle(x, y, w, S(18)), tk.Faint, TextFormatFlags.Right);
+            int ty = y + Rise(aTitle);
+            GxDraw.Text(g, _title, Gx.F(12, true), new Rectangle(x, ty, w, S(18)), Fade(tk.Text2, aTitle));
+            GxDraw.Text(g, "近 40 秒", Gx.F(11), new Rectangle(x, ty, w, S(18)), Fade(tk.Faint, aTitle), TextFormatFlags.Right);
             y += S(30);
 
             Color StateColor(MetricItem it, bool line)
@@ -195,20 +226,30 @@ namespace LiteMonitor.src.UI.Graphite
             {
                 if (it == null) return;
                 it.GetFormattedText(false);
-                GxDraw.Text(g, Name(it), Gx.F(11), new Rectangle(cx, y, cw, S(16)), tk.Muted, TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
-                string v = it.TextValue != null ? it.GetFormattedText(false) : it.CachedValueText;
-                string u = it.TextValue != null ? "" : it.CachedUnitText;
+                int vy = y + Rise(aVals);
+                GxDraw.Text(g, Name(it), Gx.F(11), new Rectangle(cx, vy, cw, S(16)), Fade(tk.Muted, aVals), TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+                string v, u;
+                if (it.TextValue != null) { v = it.GetFormattedText(false); u = ""; }
+                else if (count < 0.999f && it.Value.HasValue)
+                {
+                    // 数值从 0 数到当前值
+                    float cv = it.Value.Value * count;
+                    var unitCfg = it.BoundConfig?.UnitPanel;
+                    v = MetricUtils.GetValueStr(it.Key, cv, false, unitCfg);
+                    u = MetricUtils.GetDisplayUnit(it.Key, MetricUtils.GetUnitStr(it.Key, cv, MetricUtils.UnitContext.Panel), unitCfg);
+                }
+                else { v = it.CachedValueText; u = it.CachedUnitText; }
                 var fv = Gx.F(28, false, true);
                 int vw = GxDraw.Measure(g, v, fv);
-                GxDraw.Text(g, v, fv, new Rectangle(cx, y + S(20), Math.Min(vw + S(4), cw), S(32)), StateColor(it, false));
-                GxDraw.Text(g, u, Gx.F(12), new Rectangle(cx + vw + S(3), y + S(32), S(60), S(18)), tk.Faint);
+                GxDraw.Text(g, v, fv, new Rectangle(cx, vy + S(20), Math.Min(vw + S(4), cw), S(32)), Fade(StateColor(it, false), aVals));
+                GxDraw.Text(g, u, Gx.F(12), new Rectangle(cx + vw + S(3), vy + S(32), S(60), S(18)), Fade(tk.Faint, aVals));
             }
             int half = (w - S(12)) / 2;
             Big(_a, x, half);
             Big(_b, x + half + S(12), half);
             y += S(62);
 
-            // 走势：第一项带面积，第二项为淡色线
+            // 走势：第一项带面积，第二项为淡色线；从左往右描出，描完在末端弹出一个点
             var spark = new Rectangle(x, y, S(240), S(56));
             // 两条线各自按自身范围缩放（单位往往不同，如 % 与 °C），留 15% 上下余量
             PointF[]? Pts(MetricItem? it)
@@ -224,6 +265,8 @@ namespace LiteMonitor.src.UI.Graphite
                     p[i] = new PointF(spark.X + spark.Width * i / (float)(n - 1), spark.Bottom - S(2) - Math.Clamp((it.HistoryAt(i) - lo) / (hi - lo), 0, 1) * (spark.Height - S(4)));
                 return p;
             }
+            var st0 = g.Save();
+            g.SetClip(new RectangleF(spark.X - S(2), spark.Y - S(4), (spark.Width + S(4)) * reveal, spark.Height + S(8)));
             var pa = Pts(_a);
             if (pa != null)
             {
@@ -233,7 +276,8 @@ namespace LiteMonitor.src.UI.Graphite
                     path.AddLines(pa);
                     path.AddLine(pa[^1].X, spark.Bottom, pa[0].X, spark.Bottom);
                     path.CloseFigure();
-                    using var fill = new SolidBrush(Color.FromArgb(33, c));
+                    using var fill = new LinearGradientBrush(new Rectangle(spark.X, spark.Y - 1, spark.Width, spark.Height + 2),
+                        Color.FromArgb(60, c), Color.FromArgb(6, c), 90f);
                     g.FillPath(fill, path);
                 }
                 using var pen = new Pen(c, S(1.6f)) { LineJoin = LineJoin.Round };
@@ -245,7 +289,17 @@ namespace LiteMonitor.src.UI.Graphite
                 using var pen = new Pen(Color.FromArgb(140, tk.Muted), S(1.6f)) { LineJoin = LineJoin.Round };
                 g.DrawLines(pen, pb);
             }
-            y = spark.Bottom + S(10);
+            g.Restore(st0);
+            if (pa != null && dot > 0.01f)
+            {
+                float r = S(3.5f) * dot;
+                var e = pa[^1];
+                using var b = new SolidBrush(StateColor(_a!, true));
+                using var ring = new Pen(tk.Float, S(2));
+                g.FillEllipse(b, e.X - r, e.Y - r, r * 2, r * 2);
+                g.DrawEllipse(ring, e.X - r, e.Y - r, r * 2, r * 2);
+            }
+            y = spark.Bottom + S(10) + Rise(aLegend);
 
             // 图例与峰值（峰值靠右，图例只占剩余宽度，放不下就省略号）
             int legendRight = x + w;
@@ -256,18 +310,18 @@ namespace LiteMonitor.src.UI.Graphite
                 string ps = MetricUtils.GetValueStr(_a.Key, peak, false, _a.BoundConfig?.UnitPanel) +
                             MetricUtils.GetDisplayUnit(_a.Key, MetricUtils.GetUnitStr(_a.Key, peak, MetricUtils.UnitContext.Panel), _a.BoundConfig?.UnitPanel);
                 int pw = GxDraw.Measure(g, ps, Gx.F(11, false, true));
-                GxDraw.Text(g, ps, Gx.F(11, false, true), new Rectangle(x + w - pw, y, pw, S(16)), tk.Text2);
-                GxDraw.Text(g, "峰值", Gx.F(11), new Rectangle(x + w - pw - S(32), y, S(30), S(16)), tk.Faint);
+                GxDraw.Text(g, ps, Gx.F(11, false, true), new Rectangle(x + w - pw, y, pw, S(16)), Fade(tk.Text2, aLegend));
+                GxDraw.Text(g, "峰值", Gx.F(11), new Rectangle(x + w - pw - S(32), y, S(30), S(16)), Fade(tk.Faint, aLegend));
                 legendRight = x + w - pw - S(40);
             }
             int lx = x;
             void Legend(MetricItem? it, Color c)
             {
                 if (it == null || lx + S(30) > legendRight) return;
-                GxDraw.Round(g, new Rectangle(lx, y + S(7), S(8), S(2)), S(1), c);
+                GxDraw.Round(g, new Rectangle(lx, y + S(7), S(8), S(2)), S(1), Fade(c, aLegend));
                 string l = Name(it);
                 int lw = Math.Min(GxDraw.Measure(g, l, Gx.F(11)) + S(2), legendRight - lx - S(13));
-                GxDraw.Text(g, l, Gx.F(11), new Rectangle(lx + S(13), y, lw, S(16)), tk.Faint, TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+                GxDraw.Text(g, l, Gx.F(11), new Rectangle(lx + S(13), y, lw, S(16)), Fade(tk.Faint, aLegend), TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
                 lx += S(13) + lw + S(12);
             }
             if (_a != null) Legend(_a, StateColor(_a, true));
@@ -289,7 +343,7 @@ namespace LiteMonitor.src.UI.Graphite
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { _timer.Dispose(); _card?.Dispose(); _frame?.Dispose(); }
+            if (disposing) { _pump.Dispose(); _card?.Dispose(); _frame?.Dispose(); _opaque?.Dispose(); }
             base.Dispose(disposing);
         }
 

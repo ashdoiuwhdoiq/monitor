@@ -35,6 +35,8 @@ namespace LiteMonitor
         private long _hoverSince;
         private long _leftAt = -1;
         private Bitmap? _frameBmp, _contentBmp, _swapFrom; // 逐帧复用，不再每帧新建两张整条位图再复制一份
+        private readonly LiteMonitor.src.UI.Graphite.VsyncPump _pump;
+        private long _lastContentAt;
         private TaskbarFlyout? _flyout;
         
         // 公开属性
@@ -82,6 +84,8 @@ namespace LiteMonitor
 
             _fx.Tick += (_, __) => FxTick();
             _fx.Start();
+            // 悬停 / 动画期间按显示器刷新率出帧（165Hz 屏即 165fps），平时只靠 30fps 轮询
+            _pump = new LiteMonitor.src.UI.Graphite.VsyncPump(this, FxTick);
             _clickTimer.Interval = Math.Max(SystemInformation.DoubleClickTime, 200);
             _clickTimer.Tick += (_, __) => { _clickTimer.Stop(); ToggleLines(); };
 
@@ -101,6 +105,7 @@ namespace LiteMonitor
             }
             _winHelper.ApplyLayeredStyle(_bizHelper.TransparentKey, _cfg.TaskbarClickThrough);
             _bizHelper.CheckTheme(true);
+            _timer.Interval = Math.Max(_cfg.RefreshMs, 60); // 设置里改了采样间隔时立即生效
 
             if (!_cfg.TaskbarHoverShowAll) _flyout?.HideFlyout();
 
@@ -119,7 +124,8 @@ namespace LiteMonitor
         /// 重绘任务栏条。逐像素透明模式下直接把带 Alpha 的位图提交给系统；
         /// 提交失败则永久退回原来的颜色键 + OnPaint 方式，保证任务栏条始终能显示。
         /// </summary>
-        private void Redraw()
+        /// <param name="content">是否重画文字层。高亮胶囊滑动等纯动画帧只合成缓存好的文字层，开销很小。</param>
+        private void Redraw(bool content = true)
         {
             if (!_winHelper.PerPixelAlpha || !IsHandleCreated || Width <= 0 || Height <= 0)
             {
@@ -137,9 +143,12 @@ namespace LiteMonitor
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                 g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
                 DrawPill(g);
-                var content = Reuse(ref _contentBmp);
+                bool fresh = _contentBmp == null || _contentBmp.Width != Width || _contentBmp.Height != Height;
+                var layer = Reuse(ref _contentBmp);
+                if (fresh || content)
                 {
-                    using (var cg = Graphics.FromImage(content))
+                    _lastContentAt = Motion.Now;
+                    using (var cg = Graphics.FromImage(layer))
                     {
                         cg.Clear(Color.Transparent);
                         cg.SmoothingMode = SmoothingMode.HighQuality;
@@ -147,17 +156,19 @@ namespace LiteMonitor
                         TaskbarRenderer.BreathClock = Motion.Now;
                         if (_cols != null) TaskbarRenderer.Render(cg, _cols, _bizHelper.LastIsLightTheme, alphaText: true);
                     }
+                }
+                {
                     float p = _swap.Value();
                     if (_swapFrom != null && p < 1)
                     {
                         // 单/双行切换：旧画面上移 10px 淡出，新画面从下方 10px 淡入（.55s）
                         float k = Math.Clamp(p, 0, 1);
                         DrawFaded(g, _swapFrom, -10 * k * UIUtils.ScaleFactor, 1 - k);
-                        DrawFaded(g, content, 10 * (1 - k) * UIUtils.ScaleFactor, k);
+                        DrawFaded(g, layer, 10 * (1 - k) * UIUtils.ScaleFactor, k);
                     }
                     else
                     {
-                        g.DrawImageUnscaled(content, 0, 0);
+                        g.DrawImageUnscaled(layer, 0, 0);
                     }
                 }
                 rendered = true;
@@ -230,8 +241,8 @@ namespace LiteMonitor
         }
 
         /// <summary>
-        /// 30fps 的轻量帧循环：轮询指针（穿透模式也能悬停），驱动高亮胶囊、呼吸点、单双行切换与浮卡。
-        /// 没有任何动画时只做一次坐标判断，不重绘。
+        /// 帧循环：平时 30fps 轮询指针（穿透模式也能悬停）、画呼吸点；指针在条上或有动画时改由垂直同步驱动，
+        /// 高亮胶囊、单双行切换与浮卡跟手。没有任何变化时只做一次坐标判断，不重绘。
         /// </summary>
         private void FxTick()
         {
@@ -268,11 +279,12 @@ namespace LiteMonitor
             if (_hoverCol < 0 && _leftAt >= 0 && now - _leftAt >= 140) { _flyout?.HideFlyout(); _flyoutCol = -1; _leftAt = -1; }
 
             bool animating = _pillX.IsRunning(now) || _pillW.IsRunning(now) || _pillA.IsRunning(now) || _swap.IsRunning(now);
-            if (dirty || animating || TaskbarRenderer.HasBreathing)
-                Redraw();
-            if (_swapFrom != null && !_swap.IsRunning(now)) { _swapFrom.Dispose(); _swapFrom = null; Redraw(); }
-            // 有动画时 ~60fps（滑动的高亮胶囊才跟手）；平时 30fps 只轮询指针、画呼吸点
-            _fx.Interval = animating || dirty ? 15 : 33;
+            // 呼吸点要重画文字层，限制在 30fps 以内即可
+            bool breath = TaskbarRenderer.HasBreathing && now - _lastContentAt >= 33;
+            if (dirty || animating || breath)
+                Redraw(content: breath);
+            if (_swapFrom != null && !_swap.IsRunning(now)) { _swapFrom.Dispose(); _swapFrom = null; Redraw(content: false); }
+            if (animating || _hoverCol >= 0) _pump.Start(); else _pump.Stop();
         }
 
         private int _flyoutCol = -1;
@@ -318,6 +330,7 @@ namespace LiteMonitor
                 _timer.Dispose();
                 _currentMenu?.Dispose();
                 _fx.Dispose();
+                _pump.Dispose();
                 _clickTimer.Dispose();
                 _flyout?.Dispose();
                 _frameBmp?.Dispose();
