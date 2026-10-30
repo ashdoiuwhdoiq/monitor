@@ -246,6 +246,7 @@ namespace LiteMonitor
                         else
                         {
                             it.Value = _mon.Get(it.Key);
+                            if (it.Value.HasValue) it.PushHistory(it.Value.Value); // 任务栏浮卡的走势线
                         }
                     }
                     UpdateItem(col.Top);
@@ -637,6 +638,9 @@ namespace LiteMonitor
         {
             gr.SetCollapsed(_cfg.CollapsedGroups?.Contains(gr.GroupName) == true, animate: false);
         }
+
+        /// <summary>只重建任务栏列（单/双行切换时用，不打断主面板动画）。</summary>
+        public void RebuildTaskbarColumns() => _hxColsTaskbar = BuildColumnsCore(forTaskbar: true);
 
         private void BuildHorizontalColumns()
         {

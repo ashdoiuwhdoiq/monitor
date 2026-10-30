@@ -19,7 +19,9 @@ namespace LiteMonitor.src.UI.Graphite
         public bool Dark;
 
         private static Gx? _dark, _light;
-        public static Gx Current => UIColors.IsDark ? (_dark ??= Build(true)) : (_light ??= Build(false));
+        public static Gx Current => For(UIColors.IsDark);
+        /// <summary>指定深浅的色板（任务栏浮卡跟随系统任务栏的明暗，而不是界面模式）。</summary>
+        public static Gx For(bool dark) => dark ? (_dark ??= Build(true)) : (_light ??= Build(false));
 
         private static Color H(string s) => ColorTranslator.FromHtml(s);
 

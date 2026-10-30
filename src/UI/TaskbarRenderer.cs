@@ -13,17 +13,23 @@ namespace LiteMonitor
         // 字体缓存 - 直接初始化，避免每次渲染都创建字体
         private static Font? _cachedFont = null;
 
+        // 设计稿配色：标签用淡色，正常数值用正文色，偏高琥珀、过高珊瑚红
         // 浅色主题
-        private static readonly Color LABEL_LIGHT = Color.FromArgb(20, 20, 20);
-        private static readonly Color SAFE_LIGHT = Color.FromArgb(0x00, 0x80, 0x40);
-        private static readonly Color WARN_LIGHT = Color.FromArgb(0xB5, 0x75, 0x00);
-        private static readonly Color CRIT_LIGHT = Color.FromArgb(0xC0, 0x30, 0x30);
+        private static readonly Color LABEL_LIGHT = ColorTranslator.FromHtml("#555C66");
+        private static readonly Color SAFE_LIGHT = ColorTranslator.FromHtml("#15181D");
+        private static readonly Color WARN_LIGHT = ColorTranslator.FromHtml("#9A5B00");
+        private static readonly Color CRIT_LIGHT = ColorTranslator.FromHtml("#CF3535");
 
         // 深色主题
-        private static readonly Color LABEL_DARK = Color.White;
-        private static readonly Color SAFE_DARK = Color.FromArgb(0x66, 0xFF, 0x99);
-        private static readonly Color WARN_DARK = Color.FromArgb(0xFF, 0xD6, 0x66);
-        private static readonly Color CRIT_DARK = Color.FromArgb(0xFF, 0x66, 0x66);
+        private static readonly Color LABEL_DARK = ColorTranslator.FromHtml("#9AA1AC");
+        private static readonly Color SAFE_DARK = ColorTranslator.FromHtml("#E8EAED");
+        private static readonly Color WARN_DARK = ColorTranslator.FromHtml("#F2B24C");
+        private static readonly Color CRIT_DARK = ColorTranslator.FromHtml("#FF6B6B");
+
+        /// <summary>偏高 / 过高时数值前的呼吸点（设计稿 1.8s / 1.2s 一个周期），由任务栏窗口逐帧传入时间。</summary>
+        public static long BreathClock;
+        /// <summary>本帧是否画了呼吸点（需要继续逐帧重绘）。</summary>
+        public static bool HasBreathing;
 
         // ★★★ [新增] 自定义颜色缓存 ★★★
         private static bool _useCustom = false;
@@ -71,6 +77,7 @@ namespace LiteMonitor
         public static void Render(Graphics g, List<Column> cols, bool light, bool alphaText = false)
         {
             _alphaText = alphaText;
+            HasBreathing = false;
             // [防空策略] 万一还没人调用 ReloadStyle，就自己兜底初始化一次
             if (_cachedFont == null)
             {
@@ -148,6 +155,24 @@ namespace LiteMonitor
 
             DrawText(g, label, font, rc, labelColor, false); // Label 左对齐
             DrawText(g, value, font, rc, valueColor, true);  // Value 右对齐
+
+            // 偏高 / 过高：数值左侧的呼吸点（透明度 1→.35、大小 1→.7 往复）
+            int state = item.CachedColorState;
+            if (state > 0 && _alphaText)
+            {
+                HasBreathing = true;
+                float period = state == 2 ? 1200f : 1800f;
+                float ph = (float)(0.5 - 0.5 * Math.Cos(2 * Math.PI * (BreathClock % (long)period) / period));
+                float a = 1 - 0.65f * ph, sc = 1 - 0.3f * ph;
+                float vw = g.MeasureString(value, font, PointF.Empty, StringFormat.GenericTypographic).Width;
+                float d = 5f * UIUtils.ScaleFactor * sc;
+                float cx = rc.Right - vw - 6f * UIUtils.ScaleFactor, cy = rc.Y + rc.Height / 2f;
+                using var b = new SolidBrush(Color.FromArgb((int)(255 * a), valueColor));
+                var sm = g.SmoothingMode;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.FillEllipse(b, cx - d / 2, cy - d / 2, d, d);
+                g.SmoothingMode = sm;
+            }
         }
 
         private static void DrawText(Graphics g, string text, Font font, Rectangle rc, Color color, bool alignRight)
@@ -160,14 +185,8 @@ namespace LiteMonitor
                 return;
             }
 
-            using var sf = new StringFormat(StringFormat.GenericTypographic)
-            {
-                Alignment = alignRight ? StringAlignment.Far : StringAlignment.Near,
-                LineAlignment = StringAlignment.Center,
-                FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip | StringFormatFlags.MeasureTrailingSpaces
-            };
-            using var brush = new SolidBrush(color);
-            g.DrawString(text, font, brush, rc, sf);
+            // 与面板共用 GDI+ 绘制：语言包里的 🔼🔽 等 emoji 自动换用 Segoe UI Emoji，不再显示成方框
+            GraphitePanel.DrawText(g, text, font, rc, color, alignRight ? TextFormatFlags.Right : TextFormatFlags.Left);
         }
         // [新增] 辅助：根据状态快速获取颜色 (替代原来的 PickColor)
         private static Color GetStateColor(int state, bool light)

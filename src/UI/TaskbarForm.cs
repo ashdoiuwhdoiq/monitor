@@ -1,5 +1,8 @@
 using LiteMonitor.src.Core;
 using LiteMonitor.src.UI.Helpers;
+using LiteMonitor.src.UI.Graphite;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -24,7 +27,15 @@ namespace LiteMonitor
         private ContextMenuStrip? _currentMenu;
         private DateTime _lastFindHandleTime = DateTime.MinValue;
         private string _lastLayoutSignature = "";
-        private readonly TaskbarTooltipHelper _tooltipHelper;
+        // ★ 设计稿交互：悬停高亮胶囊、呼吸点、单击切换单/双行（交叉淡入）、悬停浮卡
+        private readonly System.Windows.Forms.Timer _fx = new() { Interval = 33 };
+        private readonly System.Windows.Forms.Timer _clickTimer = new();
+        private readonly Tween _pillX = new(0), _pillW = new(0), _pillA = new(0), _swap = new(1);
+        private int _hoverCol = -1;
+        private long _hoverSince;
+        private long _leftAt = -1;
+        private Bitmap? _lastFrame, _swapFrom;
+        private TaskbarFlyout? _flyout;
         
         // 公开属性
         public string TargetDevice { get; private set; } = "";
@@ -69,8 +80,10 @@ namespace LiteMonitor
             _timer.Tick += (_, __) => Tick();
             _timer.Start();
 
-            // 鼠标悬浮提示初始化
-            _tooltipHelper = new TaskbarTooltipHelper(this, _cfg, _ui);
+            _fx.Tick += (_, __) => FxTick();
+            _fx.Start();
+            _clickTimer.Interval = Math.Max(SystemInformation.DoubleClickTime, 200);
+            _clickTimer.Tick += (_, __) => { _clickTimer.Stop(); ToggleLines(); };
 
             Tick();
         }
@@ -89,8 +102,7 @@ namespace LiteMonitor
             _winHelper.ApplyLayeredStyle(_bizHelper.TransparentKey, _cfg.TaskbarClickThrough);
             _bizHelper.CheckTheme(true);
 
-            // 更新悬浮窗模式 (支持热切换)
-            _tooltipHelper?.ReloadMode();
+            if (!_cfg.TaskbarHoverShowAll) _flyout?.HideFlyout();
 
             // 注意：这里仍然可能因为 _cols 为空而暂时不 Build，
             // 但随后的 Tick 会在获取到新数据后自动 Build
@@ -124,7 +136,31 @@ namespace LiteMonitor
                 g.Clear(Color.FromArgb(1, 0, 0, 0));
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                 g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-                if (_cols != null) TaskbarRenderer.Render(g, _cols, _bizHelper.LastIsLightTheme, alphaText: true);
+                DrawPill(g);
+                using (var content = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                {
+                    using (var cg = Graphics.FromImage(content))
+                    {
+                        cg.SmoothingMode = SmoothingMode.HighQuality;
+                        cg.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                        TaskbarRenderer.BreathClock = Motion.Now;
+                        if (_cols != null) TaskbarRenderer.Render(cg, _cols, _bizHelper.LastIsLightTheme, alphaText: true);
+                    }
+                    float p = _swap.Value();
+                    if (_swapFrom != null && p < 1)
+                    {
+                        // 单/双行切换：旧画面上移 10px 淡出，新画面从下方 10px 淡入（.55s）
+                        float k = Math.Clamp(p, 0, 1);
+                        DrawFaded(g, _swapFrom, -10 * k * UIUtils.ScaleFactor, 1 - k);
+                        DrawFaded(g, content, 10 * (1 - k) * UIUtils.ScaleFactor, k);
+                    }
+                    else
+                    {
+                        g.DrawImageUnscaled(content, 0, 0);
+                        _lastFrame?.Dispose();
+                        _lastFrame = (Bitmap)content.Clone();
+                    }
+                }
                 rendered = true;
             }
             catch (Exception ex)
@@ -150,6 +186,117 @@ namespace LiteMonitor
 
         private bool _layeredResetTried;
 
+        private static void DrawFaded(Graphics g, Bitmap bmp, float dy, float alpha)
+        {
+            if (alpha <= 0.01f) return;
+            using var ia = new ImageAttributes();
+            ia.SetColorMatrix(new ColorMatrix { Matrix33 = Math.Clamp(alpha, 0, 1) });
+            g.DrawImage(bmp, new Rectangle(0, (int)Math.Round(dy), bmp.Width, bmp.Height), 0, 0, bmp.Width, bmp.Height, GraphicsUnit.Pixel, ia);
+        }
+
+        /// <summary>悬停高亮：圆角胶囊在列之间弹簧滑动（.45s，略过冲），移出时淡出。</summary>
+        private void DrawPill(Graphics g)
+        {
+            float a = _pillA.Value();
+            if (a <= 0.01f || _pillW.Value() < 2) return;
+            bool light = _bizHelper.LastIsLightTheme;
+            int alpha = (int)Math.Round(Math.Clamp(a, 0, 1) * (light ? 18 : 22));
+            float pad = 4 * UIUtils.ScaleFactor;
+            var r = new RectangleF(_pillX.Value() - pad, pad, _pillW.Value() + pad * 2, Height - pad * 2);
+            using var path = UIUtils.RoundRect(Rectangle.Round(r), (int)(8 * UIUtils.ScaleFactor));
+            using var b = new SolidBrush(Color.FromArgb(alpha, light ? Color.Black : Color.White));
+            g.FillPath(b, path);
+        }
+
+        private int ColumnAt(Point client)
+        {
+            if (_cols == null || !ClientRectangle.Contains(client)) return -1;
+            bool vertical = _bizHelper.IsVertical();
+            for (int i = 0; i < _cols.Count; i++)
+            {
+                var b = _cols[i].Bounds;
+                if (vertical ? b.Contains(client) : client.X >= b.Left - 6 && client.X <= b.Right + 6) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// 30fps 的轻量帧循环：轮询指针（穿透模式也能悬停），驱动高亮胶囊、呼吸点、单双行切换与浮卡。
+        /// 没有任何动画时只做一次坐标判断，不重绘。
+        /// </summary>
+        private void FxTick()
+        {
+            if (IsDisposed || !IsHandleCreated || _cols == null) return;
+            long now = Motion.Now;
+            int col = Visible ? ColumnAt(PointToClient(Cursor.Position)) : -1;
+            bool dirty = false;
+
+            if (col != _hoverCol)
+            {
+                if (col >= 0)
+                {
+                    var b = _cols[col].Bounds;
+                    var ease = new Ease(.34, 1.3, .64, 1);
+                    if (_hoverCol < 0 && _pillA.Value() < 0.05f) { _pillX.Snap(b.X); _pillW.Snap(b.Width); }
+                    else { _pillX.Set(b.X, 450, ease); _pillW.Set(b.Width, 450, ease); }
+                    _pillA.Set(1, 200, Motion.Out);
+                    if (_hoverCol < 0 && (_flyout == null || !_flyout.Visible)) _hoverSince = now;
+                    _leftAt = -1;
+                }
+                else
+                {
+                    _pillA.Set(0, 250, Motion.Out);
+                    _leftAt = now;
+                }
+                _hoverCol = col;
+                dirty = true;
+                if (col >= 0 && _flyout != null && _flyout.Visible) ShowFlyout(col);
+            }
+
+            // 浮卡：停留 400ms 出现；离开 140ms 后收起（经过列间缝隙时不闪）
+            if (_cfg.TaskbarHoverShowAll && _hoverCol >= 0 && now - _hoverSince >= 400 && (_flyout == null || !_flyout.Visible || _flyoutCol != _hoverCol))
+                ShowFlyout(_hoverCol);
+            if (_hoverCol < 0 && _leftAt >= 0 && now - _leftAt >= 140) { _flyout?.HideFlyout(); _flyoutCol = -1; _leftAt = -1; }
+
+            if (dirty || TaskbarRenderer.HasBreathing || _pillX.IsRunning(now) || _pillW.IsRunning(now) || _pillA.IsRunning(now) || _swap.IsRunning(now))
+                Redraw();
+            if (_swapFrom != null && !_swap.IsRunning(now)) { _swapFrom.Dispose(); _swapFrom = null; Redraw(); }
+        }
+
+        private int _flyoutCol = -1;
+        private void ShowFlyout(int col)
+        {
+            if (_cols == null || col < 0 || col >= _cols.Count || !_cfg.TaskbarHoverShowAll) return;
+            var c = _cols[col];
+            var first = c.Top ?? c.Bottom;
+            if (first == null) return;
+            string title = LanguageManager.T(first.BoundConfig?.CachedGroupsKey ?? "");
+            if (string.IsNullOrEmpty(title) || title.StartsWith("Groups.")) title = first.Key.Split('.')[0];
+            int s0 = 0;
+            while (s0 < title.Length && !char.IsLetterOrDigit(title[s0])) s0++;
+            title = title.Substring(s0).Trim();
+            _flyout ??= new TaskbarFlyout();
+            _flyout.ShowFor(c.Top, c.Bottom, title, RectangleToScreen(c.Bounds), RectangleToScreen(ClientRectangle), !_bizHelper.LastIsLightTheme);
+            _flyoutCol = col;
+        }
+
+        /// <summary>单击任务栏条：在单行 / 双行之间切换，旧画面淡出上移、新画面淡入（.55s）。</summary>
+        private void ToggleLines()
+        {
+            if (_lastFrame == null) return;
+            _swapFrom?.Dispose();
+            _swapFrom = (Bitmap)_lastFrame.Clone();
+            _cfg.TaskbarSingleLine = !_cfg.TaskbarSingleLine;
+            try { _cfg.Save(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[TaskbarForm] " + ex.Message); }
+            _ui.RebuildTaskbarColumns();
+            _lastLayoutSignature = "";
+            _swap.Snap(0);
+            _swap.Set(1, 550, Motion.InOut);
+            _flyout?.HideFlyout();
+            _flyoutCol = -1;
+            Tick();
+        }
+
         protected override void Dispose(bool disposing)
         {
             if (disposing)
@@ -158,7 +305,11 @@ namespace LiteMonitor
                 _timer.Stop();
                 _timer.Dispose();
                 _currentMenu?.Dispose();
-                _tooltipHelper?.Dispose();
+                _fx.Dispose();
+                _clickTimer.Dispose();
+                _flyout?.Dispose();
+                _lastFrame?.Dispose();
+                _swapFrom?.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -184,6 +335,7 @@ namespace LiteMonitor
             // 这里直接在消息层处理 WM_LBUTTONDBLCLK，确保双击动作始终能被触发。
             if (m.Msg == WM_LBUTTONDBLCLK)
             {
+                _clickTimer.Stop(); // 双击不触发单击的单/双行切换
                 _bizHelper.HandleDoubleClick(_mainForm, _ui);
                 return;
             }
@@ -211,6 +363,12 @@ namespace LiteMonitor
             if (e.Button == MouseButtons.Right)
             {
                 ShowContextMenu();
+            }
+            else if (e.Button == MouseButtons.Left && !_bizHelper.IsVertical())
+            {
+                // 等过双击间隔才判定为单击
+                _clickTimer.Stop();
+                _clickTimer.Start();
             }
         }
 
@@ -278,7 +436,7 @@ namespace LiteMonitor
             
             _bizHelper.UpdatePlacement(Width);
             
-            _tooltipHelper.UpdateContent();
+            _flyout?.RefreshContent();
 
             Redraw();
         }
