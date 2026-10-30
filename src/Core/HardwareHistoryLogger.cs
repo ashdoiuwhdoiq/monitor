@@ -56,6 +56,18 @@ namespace LiteMonitor.src.Core
 
         public static IEnumerable<string> SupportedKeys => _supportedKeys;
 
+        /// <summary>按分钟汇总的历史点副本（加锁拷贝，含当前尚未落盘的这一分钟），供界面读取。</summary>
+        public static List<HardwareHistoryPoint> GetPointsSnapshot()
+        {
+            lock (_dataLock)
+            {
+                var list = CloneDataUnsafe().Points;
+                var pending = BuildCurrentPointUnsafe();
+                if (pending != null) list.Add(ClonePoint(pending));
+                return list;
+            }
+        }
+
         public static void Load()
         {
             lock (_ioLock)

@@ -440,7 +440,7 @@ namespace LiteMonitor
                     }
                 }
 
-                var trendForm = new HardwareTrendForm(cfg);
+                var trendForm = new LiteMonitor.src.UI.Graphite.TrendsWindow(cfg);
                 trendForm.Show();
             };
             menu.Items.Add(trendItem);
@@ -451,7 +451,7 @@ namespace LiteMonitor
             trafficItem.Image = Properties.Resources.TrafficIcon;
             trafficItem.Click += (_, __) =>
             {
-                var formHistory = new TrafficHistoryForm(cfg);
+                var formHistory = new LiteMonitor.src.UI.Graphite.TrafficWindow(cfg);
                 formHistory.Show();
             };
             menu.Items.Add(trafficItem);

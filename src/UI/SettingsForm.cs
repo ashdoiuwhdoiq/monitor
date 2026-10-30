@@ -1,314 +1,363 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Windows.Forms;
 using LiteMonitor.src.Core;
 using LiteMonitor.src.Core.Actions;
 using LiteMonitor.src.UI.Controls;
+using LiteMonitor.src.UI.Graphite;
 using LiteMonitor.src.UI.SettingsPage;
 
 namespace LiteMonitor.src.UI
 {
+    /// <summary>
+    /// 设置窗口（设计稿 Settings.dc.html，1200×760）：左侧导航（选中块弹簧滑动）、中间页面（入场上浮、分区依次浮现）、
+    /// 右侧实时预览、底部浮出的保存条。设计稿的四个页面全部自绘；旧版的其余设置页作为「更多设置」保留，功能不丢。
+    /// 所有改动先写入草稿，保存时才合并进实时设置（Draft-Commit）。
+    /// </summary>
     public class SettingsForm : Form
     {
-        private Settings _cfg; // Live Settings
-        private Settings _draftCfg; // Draft Settings
-        private UIController _ui;
-        private MainForm _mainForm;
-        
-        private NavRail _pnlNavContainer;
+        private readonly Settings _cfg;      // Live Settings
+        private readonly Settings _draftCfg; // Draft Settings
+        private readonly UIController _ui;
+        private readonly MainForm _mainForm;
+        private readonly SettingsContext _ctx;
 
-        // 未保存提示：与打开窗口（或上次应用）时的草稿快照比较
-        private string _baseline = "";
-        private Label _lblDirty = null!;
-        private readonly System.Windows.Forms.Timer _dirtyTimer = new System.Windows.Forms.Timer { Interval = 400 };
-        private DateTime _appliedUntil = DateTime.MinValue;
-        private BufferedPanel _pnlContent; // 使用现有的 BufferedPanel
-        
-        // 缓存所有页面实例
-        private Dictionary<string, SettingsPageBase> _pages = new Dictionary<string, SettingsPageBase>();
+        private SideCanvas _side = null!;
+        private Panel _host = null!;
+        private PreviewCanvas _preview = null!;
+        private SaveBar _saveBar = null!;
+
+        private readonly Dictionary<string, Func<SettingsPageBase>> _factories = new();
+        private readonly Dictionary<string, SettingsPageBase> _pages = new();
+        private readonly HashSet<string> _designKeys = new() { "Appearance", "Items", "Threshold", "TaskbarDesign" };
         private string _currentKey = "";
 
-        // 恢复 WS_EX_COMPOSITED 以防止闪烁，同时配合页面卸载机制解决卡顿
-        protected override CreateParams CreateParams
-        {
-            get
-            {
-                CreateParams cp = base.CreateParams;
-                cp.ExStyle |= 0x02000000; // WS_EX_COMPOSITED
-                return cp;
-            }
-        }
-
-        protected override void OnResizeBegin(EventArgs e)
-        {
-            this.SuspendLayout();
-            base.OnResizeBegin(e);
-        }
-
-        protected override void OnResizeEnd(EventArgs e)
-        {
-            base.OnResizeEnd(e);
-            this.ResumeLayout(true);
-        }
+        // 未保存提示：与打开窗口（或上次保存）时的草稿快照逐字段比较
+        private Dictionary<string, string> _baseline = new();
+        private string _baselineFull = "";
+        private readonly System.Windows.Forms.Timer _dirtyTimer = new() { Interval = 300 };
+        private readonly System.Windows.Forms.Timer _barTimer = new() { Interval = 15 };
+        private readonly Tween _barY = new Tween(0);
+        private long _flashUntil;
 
         public SettingsForm(Settings cfg, UIController ui, MainForm mainForm)
-        { 
-            _cfg = cfg; 
-            _ui = ui; 
+        {
+            _cfg = cfg;
+            _ui = ui;
             _mainForm = mainForm;
-            
-            // ★★★ Draft 机制核心：创建深拷贝 ★★★
             _draftCfg = _cfg.DeepClone();
-            
-            InitializeComponent(); 
-            
-            // ★★★ 关键点 1：构造时就初始化所有页面 ★★★
-            InitPages(); 
+            _ctx = new SettingsContext { Draft = _draftCfg, Live = _cfg, Ui = ui, Main = mainForm };
+            _ctx.Changed = () => { _preview?.Invalidate(); UpdateDirtyState(); };
+            _ctx.ImmediateApplied = () => BeginInvoke(new Action(() => { _baseline = Snapshot(out _baselineFull); UpdateDirtyState(); }));
+
+            InitializeComponent();
+            InitPages();
         }
 
         private void InitializeComponent()
         {
-            UIUtils.ScaleFactor = this.DeviceDpi / 96f;
+            UIUtils.ScaleFactor = DeviceDpi / 96f;
             UIColors.Apply(_cfg.UIThemeMode);
             UIColors.ApplyTitleBar(this);
-            this.ForeColor = UIColors.TextMain;
+            Text = LanguageManager.T("Menu.SettingsPanel");
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            MaximizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            ShowInTaskbar = true;
+            Font = new Font("Microsoft YaHei UI", 9F);
+            BackColor = Gx.Current.Win;
+            ForeColor = UIColors.TextMain;
+            ClientSize = new Size(UIUtils.S(1200), UIUtils.S(760));
+            try { Icon = Properties.Resources.AppIcon; } catch { }
 
-            this.Size = new Size(UIUtils.S(820), UIUtils.S(680));
-            this.FormBorderStyle = FormBorderStyle.FixedDialog;
-            this.MaximizeBox = false;
-            this.MinimizeBox = true;
-            this.StartPosition = FormStartPosition.CenterScreen;
-            this.Text = LanguageManager.T("Menu.SettingsPanel");
-            this.Font = new Font("Microsoft YaHei UI", 9F);
-            this.BackColor = UIColors.MainBg;
-            this.ShowInTaskbar = true;
-
-            // 侧边栏
-            var pnlSidebar = new Panel { Dock = DockStyle.Left, Width = UIUtils.S(160), BackColor = UIColors.SidebarBg };
-            
-            _pnlNavContainer = new NavRail
+            var items = new List<SideCanvas.Item>
             {
-                Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, 
-                Padding = UIUtils.S(new Padding(0, 20, 0, 0)), BackColor = UIColors.SidebarBg
+                new("Appearance", "palette", "外观", false),
+                new("Items", "list", "监控项", false),
+                new("Threshold", "alert", "阈值与告警", false),
+                new("TaskbarDesign", "taskbar", "任务栏", false),
+                new("MainPanel", "sliders", "面板高级", true),
+                new("Taskbar", "taskbar", "任务栏高级", true),
+                new("Monitor", "list", "监控项高级", true),
+                new("System", "chip", LanguageManager.T("Menu.SystemHardwar"), true),
+                new("Plugins", "grid", LanguageManager.T("Menu.Plugins"), true),
             };
-            
-            var line = new Panel { Dock = DockStyle.Right, Width = 1, BackColor = UIColors.Border };
-            pnlSidebar.Controls.Add(_pnlNavContainer);
-            pnlSidebar.Controls.Add(line);
-            this.Controls.Add(pnlSidebar);
+            _side = new SideCanvas(items) { Dock = DockStyle.Left, Width = UIUtils.S(212) };
+            _side.Navigate = SwitchPage;
+            _side.ResetRequested = ResetAll;
 
-            // 底部按钮
-            var pnlBottom = new Panel { Dock = DockStyle.Bottom, Height = UIUtils.S(60), BackColor = UIColors.MainBg };
-            pnlBottom.Paint += (s, e) => e.Graphics.DrawLine(new Pen(UIColors.Border), 0, 0, Width, 0);
+            _preview = new PreviewCanvas(_ctx) { Dock = DockStyle.Right, Width = UIUtils.S(360) };
+            _preview.CloseRequested = Close;
 
-            var flowBtns = new FlowLayoutPanel 
-            { 
-                Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, 
-                Padding = UIUtils.S(new Padding(0, 14, 20, 0)), WrapContents = false, BackColor = Color.Transparent 
-            };
-            
-            var btnOk = new LiteButton(LanguageManager.T("Menu.OK"), true);
-            var btnCancel = new LiteButton(LanguageManager.T("Menu.Cancel"), false);
-            var btnApply = new LiteButton(LanguageManager.T("Menu.Apply"), false);
-            var btnReset = new LiteButton(LanguageManager.T("Menu.Reset"), false) { ForeColor = UIColors.TextWarn };
+            _host = new BufferedPanel { Dock = DockStyle.Fill, BackColor = Gx.Current.Win };
 
-            btnOk.Click += (s, e) => { ApplySettings(); this.DialogResult = DialogResult.OK; this.Close(); };
-            btnCancel.Click += (s, e) => { this.DialogResult = DialogResult.Cancel; this.Close(); };
-            btnApply.Click += (s, e) => { ApplySettings(); };
-            
-            btnReset.Click += (s, e) => 
-            {
-                if (MessageBox.Show(LanguageManager.T("Menu.ResetConfirm"), LanguageManager.T("Menu.Reset"), MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
-                {
-                    try 
-                    {
-                        Settings.GlobalBlockSave = true;
-                        SettingsHelper.DeleteStoredSettings();
-                        Application.Restart();
-                        Environment.Exit(0);
-                    }
-                    catch (Exception ex) { Settings.GlobalBlockSave = false; MessageBox.Show(ex.Message); }
-                }
-            };
+            _saveBar = new SaveBar { Height = UIUtils.S(62), Width = UIUtils.S(380), Visible = false };
+            _saveBar.Revert = Revert;
+            _saveBar.Save = ApplySettings;
 
-            flowBtns.Controls.Add(btnOk); flowBtns.Controls.Add(btnCancel); flowBtns.Controls.Add(btnApply); flowBtns.Controls.Add(btnReset);
-            pnlBottom.Controls.Add(flowBtns);
+            Controls.Add(_host);
+            Controls.Add(_preview);
+            Controls.Add(_side);
+            Controls.Add(_saveBar);
+            _host.BringToFront();
+            _saveBar.BringToFront();
 
-            // 左侧状态：有未保存更改时出现，应用后短暂显示「已应用」
-            _lblDirty = new Label
-            {
-                AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
-                Padding = UIUtils.S(new Padding(20, 0, 0, 0)), ForeColor = UIColors.TextWarn,
-                Font = new Font("Microsoft YaHei UI", 9F), BackColor = Color.Transparent, Text = ""
-            };
-            pnlBottom.Controls.Add(_lblDirty);
-            _lblDirty.BringToFront(); // Fill 需在 Z 序最前，才会在右侧按钮区之后占用剩余空间
             _dirtyTimer.Tick += (s, e) => UpdateDirtyState();
-            this.FormClosed += (s, e) => _dirtyTimer.Dispose();
-            this.Controls.Add(pnlBottom);
+            _barTimer.Tick += (s, e) => PlaceSaveBar();
+            Resize += (s, e) => PlaceSaveBar();
+            FormClosed += (s, e) => { _dirtyTimer.Dispose(); _barTimer.Dispose(); };
 
-            // 内容区 - 使用 LiteUI.cs 中定义的 BufferedPanel
-            _pnlContent = new BufferedPanel { Dock = DockStyle.Fill, Padding = new Padding(0) };
-            this.Controls.Add(_pnlContent);
-            
-            pnlSidebar.BringToFront(); 
-            pnlBottom.SendToBack(); 
-            _pnlContent.BringToFront();
+            UIModeHub.BeforeChange += OnBeforeModeChange;
+            UIModeHub.Changed += OnModeChanged;
+            FormClosed += (s, e) => { UIModeHub.BeforeChange -= OnBeforeModeChange; UIModeHub.Changed -= OnModeChanged; };
         }
 
         private void InitPages()
         {
-            _pnlNavContainer.Controls.Clear();
-            _pages.Clear();
-            
-            // 注册所有页面
-            AddNav("MainPanel", "panel", LanguageManager.T("Menu.MainFormSettings"), new MainPanelPage());
-            AddNav("Taskbar", "taskbar", LanguageManager.T("Menu.TaskbarSettings"), new TaskbarPage());
-            AddNav("Monitor", "monitor", LanguageManager.T("Menu.MonitorItemDisplay"), new MonitorPage());
-            AddNav("Threshold", "threshold", LanguageManager.T("Menu.Thresholds"), new ThresholdPage());
-            AddNav("System", "system", LanguageManager.T("Menu.SystemHardwar"), new SystemHardwarPage());
-            AddNav("Plugins", "plugins", LanguageManager.T("Menu.Plugins"), new PluginPage());
+            _factories["Appearance"] = () => new DesignPage(new AppearanceCanvas(_ctx));
+            _factories["Items"] = () => new DesignPage(new MonitorItemsCanvas(_ctx));
+            _factories["Threshold"] = () => new DesignPage(new ThresholdCanvas(_ctx));
+            _factories["TaskbarDesign"] = () => new DesignPage(new TaskbarDesignCanvas(_ctx));
+            _factories["MainPanel"] = () => new MainPanelPage();
+            _factories["Taskbar"] = () => new TaskbarPage();
+            _factories["Monitor"] = () => new MonitorPage();
+            _factories["System"] = () => new SystemHardwarPage();
+            _factories["Plugins"] = () => new PluginPage();
 
-            _pnlNavContainer.PerformLayout();
-            SwitchPage("MainPanel");
-
-            // 页面首次加载可能会规范化草稿，等加载完再记录基线
-            this.Shown += (s, e) => BeginInvoke(new Action(() => { _baseline = SnapshotDraft(); _dirtyTimer.Start(); }));
+            SwitchPage("Appearance");
+            Shown += (s, e) => BeginInvoke(new Action(() => { _baseline = Snapshot(out _baselineFull); _dirtyTimer.Start(); }));
         }
 
-        /// <summary>草稿中用户可编辑部分的快照（排除后台自动更新的运行时字段）。</summary>
-        private string SnapshotDraft()
+        private SettingsPageBase GetPage(string key)
         {
-            try
+            if (!_pages.TryGetValue(key, out var page))
             {
-                var node = System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(_draftCfg))?.AsObject();
-                if (node == null) return "";
-                foreach (var key in node.Select(kv => kv.Key).ToList())
-                    if (SettingsChanger.IsRuntimeProp(key)) node.Remove(key);
-                return node.ToJsonString();
+                page = _factories[key]();
+                page.SetContext(_draftCfg, _mainForm, _ui);
+                _pages[key] = page;
             }
-            catch { return _baseline; }
-        }
-
-        private void UpdateDirtyState()
-        {
-            if (DateTime.Now < _appliedUntil) return;
-            bool dirty = _baseline.Length > 0 && SnapshotDraft() != _baseline;
-            string text = dirty ? "●  " + LanguageManager.T("Menu.UnsavedChanges") : "";
-            if (_lblDirty.Text != text)
-            {
-                _lblDirty.ForeColor = UIColors.TextWarn;
-                _lblDirty.Text = text;
-            }
-        }
-
-        private void AddNav(string key, string icon, string text, SettingsPageBase page)
-        {
-            // ★★★ 关键点 2：将 Draft 传递给页面，而不是 Live Settings ★★★
-            page.SetContext(_draftCfg, _mainForm, _ui);
-            _pages[key] = page;
-            var btn = new LiteNavBtn(text, icon) { Tag = key };
-            btn.Click += (s, e) => SwitchPage(key);
-            _pnlNavContainer.Controls.Add(btn);
+            return page;
         }
 
         public void SwitchPage(string key)
         {
-            if (_currentKey == key) return;
-            _currentKey = key;
+            if (_currentKey == key || !_factories.ContainsKey(key)) return;
 
-            // 更新导航按钮状态
-            _pnlNavContainer.SuspendLayout();
-            foreach (Control c in _pnlNavContainer.Controls)
-                if (c is LiteNavBtn b) b.IsActive = ((string)b.Tag == key);
-            _pnlNavContainer.ResumeLayout();
-            foreach (Control c in _pnlNavContainer.Controls)
-                if (c is LiteNavBtn b && (string)b.Tag == key) _pnlNavContainer.MoveTo(b);
-            _pnlNavContainer.Refresh(); 
-            Application.DoEvents();
-
-            if (_pages.ContainsKey(key))
+            // 旧版「监控项高级」保存时会整表写回草稿：离开时先提交，并丢弃实例，下次进入按最新草稿重建
+            if (_currentKey == "Monitor" && _pages.TryGetValue("Monitor", out var mon))
             {
-                // ★★★ 核心修复开始 ★★★
-                
-                // 1. 挂起父容器布局：告诉系统“在我操作完之前，千万不要重绘”
-                _pnlContent.SuspendLayout(); 
-                
-                try 
-                {
-                    _pnlContent.Controls.Clear();
-                    var targetPage = _pages[key];
-                    
-                    // 2. 关键技：手动预设尺寸
-                    // 在 Dock 生效前，先强制把它设为和父容器一样大。
-                    // 这样即使 Layout 有微小延迟，肉眼看到的也是填满的状态。
-                    targetPage.Size = _pnlContent.ClientSize; 
-                    targetPage.Dock = DockStyle.Fill; // 双保险
-
-                    _pnlContent.Controls.Add(targetPage);
-                    targetPage.OnShow();
-                }
-                finally
-                {
-                    // 3. 恢复布局：此时控件大小已正确，系统一次性绘制最终画面
-                    _pnlContent.ResumeLayout(); 
-                }
-                // ★★★ 核心修复结束 ★★★
+                mon.Save();
+                _pages.Remove("Monitor");
+                _host.Controls.Remove(mon);
+                mon.Dispose();
             }
+
+            _currentKey = key;
+            _side.Current = key;
+            _side.Invalidate();
+
+            bool design = _designKeys.Contains(key);
+            _preview.Visible = design;
+            _preview.TaskbarMode = key == "TaskbarDesign";
+            _preview.Invalidate();
+
+            var page = GetPage(key);
+            _host.SuspendLayout();
+            try
+            {
+                foreach (Control c in _host.Controls.Cast<Control>().ToList()) if (c != page) _host.Controls.Remove(c);
+                if (!_host.Controls.Contains(page))
+                {
+                    page.Size = _host.ClientSize;
+                    page.Dock = DockStyle.Fill;
+                    _host.Controls.Add(page);
+                }
+                page.OnShow();
+                if (!design) ApplyScrollTheme(page);
+            }
+            finally { _host.ResumeLayout(); }
+            PlaceSaveBar();
+        }
+
+        /// <summary>旧版页面里的原生滚动条、下拉框跟随深浅色（Windows 10 1809+ 的 DarkMode_Explorer 主题）。</summary>
+        private static void ApplyScrollTheme(Control root)
+        {
+            string theme = Gx.Current.Dark ? "DarkMode_Explorer" : "Explorer";
+            void Walk(Control c)
+            {
+                try { if (c.IsHandleCreated) SetWindowTheme(c.Handle, theme, null); } catch { }
+                foreach (Control child in c.Controls) Walk(child);
+            }
+            Walk(root);
+        }
+
+        [System.Runtime.InteropServices.DllImport("uxtheme.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern int SetWindowTheme(IntPtr hwnd, string? appName, string? idList);
+
+        // ===== 未保存提示 =====
+
+        private Dictionary<string, string> Snapshot(out string full)
+        {
+            full = JsonSerializer.Serialize(_draftCfg);
+            var dict = new Dictionary<string, string>();
+            try
+            {
+                var node = JsonNode.Parse(full)?.AsObject();
+                if (node != null)
+                    foreach (var kv in node)
+                        if (!SettingsChanger.IsRuntimeProp(kv.Key)) dict[kv.Key] = kv.Value?.ToJsonString() ?? "null";
+            }
+            catch { }
+            return dict;
+        }
+
+        private int CountChanges()
+        {
+            if (_baseline.Count == 0) return 0;
+            var now = Snapshot(out _);
+            int n = 0;
+            foreach (var kv in now)
+                if (!_baseline.TryGetValue(kv.Key, out var old) || old != kv.Value) n++;
+            return n;
+        }
+
+        private void UpdateDirtyState()
+        {
+            if (_saveBar == null) return;
+            bool flash = Motion.Now < _flashUntil;
+            int changes = flash ? 0 : CountChanges();
+            if (_saveBar.Changes != changes || _saveBar.Flash != flash)
+            {
+                _saveBar.Changes = changes;
+                _saveBar.Flash = flash;
+                _saveBar.Invalidate();
+            }
+            bool show = changes > 0 || flash;
+            // 浮出 / 收回：.55s 弹簧（.34,1.4,.64,1）
+            _barY.Set(show ? 1 : 0, show ? 550 : 350, show ? new Ease(.34, 1.4, .64, 1) : Motion.Out);
+            if (_barY.IsRunning(Motion.Now) || show != _saveBar.Visible) _barTimer.Start();
+        }
+
+        private void PlaceSaveBar()
+        {
+            if (_saveBar == null || _host == null) return;
+            float k = _barY.Value();
+            var host = _host.Bounds;
+            int hiddenTop = host.Bottom + UIUtils.S(10);
+            int shownTop = host.Bottom - UIUtils.S(20) - _saveBar.Height;
+            _saveBar.Left = host.X + (host.Width - _saveBar.Width) / 2;
+            _saveBar.Top = (int)Math.Round(hiddenTop + (shownTop - hiddenTop) * k);
+            bool vis = k > 0.01f;
+            if (_saveBar.Visible != vis) _saveBar.Visible = vis;
+            if (vis) _saveBar.BringToFront();
+            if (!_barY.IsRunning(Motion.Now)) _barTimer.Stop();
+        }
+
+        private void Revert()
+        {
+            var original = JsonSerializer.Deserialize<Settings>(_baselineFull);
+            if (original == null) return;
+            SettingsChanger.Merge(_draftCfg, original);
+            // 旧版页面按草稿刷新
+            if (_pages.TryGetValue("Monitor", out var mon) && _currentKey != "Monitor") { _pages.Remove("Monitor"); mon.Dispose(); }
+            if (_pages.TryGetValue(_currentKey, out var cur)) cur.OnShow();
+            _ctx.Touch();
+            foreach (var p in _pages.Values) p.Invalidate(true);
+        }
+
+        private void ResetAll()
+        {
+            if (MessageBox.Show(LanguageManager.T("Menu.ResetConfirm"), LanguageManager.T("Menu.Reset"), MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            try
+            {
+                Settings.GlobalBlockSave = true;
+                SettingsHelper.DeleteStoredSettings();
+                Application.Restart();
+                Environment.Exit(0);
+            }
+            catch (Exception ex) { Settings.GlobalBlockSave = false; MessageBox.Show(ex.Message); }
+        }
+
+        private void OnBeforeModeChange(object? source, Point? screenOrigin)
+        {
+            if (IsDisposed || !Visible) return;
+            foreach (var c in new GCanvas[] { _side, _preview, _saveBar })
+                c.BeginReveal(screenOrigin.HasValue ? c.PointToClient(screenOrigin.Value) : new Point(c.Width / 2, c.Height / 2));
+            if (_pages.TryGetValue(_currentKey, out var page) && page is DesignPage dp)
+                dp.Canvas.BeginReveal(screenOrigin.HasValue ? dp.Canvas.PointToClient(screenOrigin.Value) : new Point(dp.Canvas.Width / 2, dp.Canvas.Height / 2));
+        }
+
+        private void OnModeChanged()
+        {
+            if (IsDisposed) return;
+            BackColor = Gx.Current.Win;
+            _host.BackColor = Gx.Current.Win;
+            UIColors.ApplyTitleBar(this);
+            try { var s = Size; Size = new Size(s.Width, s.Height + 1); Size = s; } catch { }
+            // 旧版页面的控件在创建时取色：丢弃后按新配色重建
+            foreach (var key in _pages.Keys.Where(k => !_designKeys.Contains(k) && k != _currentKey).ToList())
+            {
+                if (key == "Monitor") _pages[key].Save();
+                _pages[key].Dispose();
+                _pages.Remove(key);
+            }
+            if (!_designKeys.Contains(_currentKey))
+            {
+                string cur = _currentKey;
+                if (_pages.TryGetValue(cur, out var p))
+                {
+                    if (cur == "Monitor") p.Save();
+                    _host.Controls.Remove(p);
+                    p.Dispose();
+                    _pages.Remove(cur);
+                }
+                _currentKey = "";
+                SwitchPage(cur);
+            }
+            else if (_pages.TryGetValue(_currentKey, out var dp)) dp.BackColor = Gx.Current.Win;
+            Invalidate(true);
         }
 
         private void ApplySettings()
         {
+            if (Motion.Now < _flashUntil) return;
             bool oldAutoStart = _cfg.AutoStart;
 
-            // 保存逻辑顺序优化
-            foreach (var kv in _pages) 
-            {
-                if (kv.Key != "Monitor") kv.Value.Save(); 
-            }
-            
-            if (_pages.ContainsKey("Monitor")) 
-            {
-                _pages["Monitor"].Save();
-            }
-            
-            // ★★★ Draft 机制核心：提交事务 ★★★
+            // 保存逻辑顺序：先其余页面，最后监控项（它会整表写回）
+            foreach (var kv in _pages) if (kv.Key != "Monitor") kv.Value.Save();
+            if (_pages.TryGetValue("Monitor", out var mon)) mon.Save();
+
             // 1. 全局校验 (防止全隐藏死锁)
-            bool noInteractiveWindow = 
-                (_draftCfg.HideMainForm || _draftCfg.ClickThrough) && 
+            bool noInteractiveWindow =
+                (_draftCfg.HideMainForm || _draftCfg.ClickThrough) &&
                 (!_draftCfg.ShowTaskbar || _draftCfg.TaskbarClickThrough) &&
                 _draftCfg.HideTrayIcon;
-
             if (noInteractiveWindow)
             {
-                // 自动纠正：如果所有可交互入口都被封死（隐藏或穿透+隐藏托盘），强制显示托盘
                 _draftCfg.HideTrayIcon = false;
                 MessageBox.Show("为了防止所有可交互入口都被死锁（隐藏或穿透+隐藏托盘），已强制显示托盘图标。", "LiteMonitor", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
 
-            // 2. 合并变更到 Live Settings
+            // 2. 合并变更到 Live Settings → 3. 持久化 → 4. 应用
             SettingsChanger.Merge(_cfg, _draftCfg);
             bool autoStartChanged = oldAutoStart != _cfg.AutoStart;
-
-            // 3. 持久化保存
             _cfg.Save();
-            
-            // 4. 应用副作用 (刷新界面)
             AppActions.ApplyAllSettings(_cfg, _mainForm, _ui, autoStartChanged);
 
-            // 未保存提示归零，短暂显示「已应用」
-            _baseline = SnapshotDraft();
-            _appliedUntil = DateTime.Now.AddSeconds(1.6);
-            if (_lblDirty != null)
-            {
-                _lblDirty.ForeColor = UIColors.Primary;
-                _lblDirty.Text = "✓  " + LanguageManager.T("Menu.SettingsApplied");
-            }
-
-            // 5. [Fix] Rebase Draft to match Live
-            // 将 Live 环境中由插件生成的最新监控项同步回 Draft，并保留动态显示属性
+            // 5. 草稿与实时设置对齐（插件生成的监控项等）
             SettingsChanger.RebaseDraftMonitorItems(_cfg, _draftCfg);
+
+            // 保存条显示「设置已应用 / 已保存」1.4 秒后收回
+            _baseline = Snapshot(out _baselineFull);
+            _flashUntil = Motion.Now + 1400;
+            UpdateDirtyState();
+            var t = new System.Windows.Forms.Timer { Interval = 1450 };
+            t.Tick += (s, e) => { t.Dispose(); UpdateDirtyState(); };
+            t.Start();
         }
     }
 }

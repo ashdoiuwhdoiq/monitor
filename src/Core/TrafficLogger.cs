@@ -127,6 +127,15 @@ namespace LiteMonitor.src.Core
             }
         }
 
+        /// <summary>按日的流量记录副本（加锁拷贝，供界面读取，不受后台累加影响）。</summary>
+        public static Dictionary<string, DailyRecord> GetHistorySnapshot()
+        {
+            lock (_dataLock)
+            {
+                return CloneDataUnsafe().History;
+            }
+        }
+
         // 获取今日数据 (供 UI 显示)
         public static (long up, long down) GetTodayStats()
         {

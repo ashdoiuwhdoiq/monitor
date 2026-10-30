@@ -293,6 +293,35 @@ namespace LiteMonitor.src.Core
             }
         }
         
+        private static readonly Dictionary<string, Theme> _detached = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// 读取主题但不替换 Current（设置窗口的主题卡片与实时预览用）。结果按名称缓存，调用方不要释放其字体。
+        /// </summary>
+        public static Theme? LoadDetached(string name)
+        {
+            lock (_detached)
+            {
+                if (_detached.TryGetValue(name, out var cached)) return cached;
+                try
+                {
+                    var path = Path.Combine(ThemeDir, $"{name}.json");
+                    if (!File.Exists(path)) return null;
+                    var theme = JsonSerializer.Deserialize<Theme>(File.ReadAllText(path), new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true,
+                        IgnoreReadOnlyProperties = true,
+                        AllowTrailingCommas = true
+                    });
+                    if (theme == null) return null;
+                    theme.BuildFonts();
+                    _detached[name] = theme;
+                    return theme;
+                }
+                catch { return null; }
+            }
+        }
+
         // ★★★ 修改：删除私有 Intern 方法 ★★★
         // private static string Intern(string str) ... (删除)
 

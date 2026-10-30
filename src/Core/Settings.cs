@@ -33,6 +33,8 @@ namespace LiteMonitor
         public double UIScale { get; set; } = 1.0;
         public List<string> CollapsedGroups { get; set; } = new List<string>(); // 主面板中被折叠的分组
         public bool PanelCompact { get; set; } = false; // 主面板紧凑密度（隐藏进度条、压低行高）
+        public string PanelAccent { get; set; } = "";   // 面板强调色（进度条低位、实时点），空 = 用主题自带
+        public string MotionLevel { get; set; } = "lively"; // 动效强度：lively 灵动 / calm 克制 / off 关闭
 
         // ====== 硬件相关 ======
         public string PreferredNetwork { get; set; } = "";

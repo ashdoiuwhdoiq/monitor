@@ -19,6 +19,11 @@ namespace LiteMonitor
         /// <summary>仅供离线渲染动画帧（截图工具）使用：设定后 Now 固定为该值。</summary>
         public static long? FixedNow { get; set; }
 
+        /// <summary>全局动效时长倍数：设置里「动效」灵动 = 1、克制 = 0.5、关闭 = 0（立即到位）。</summary>
+        public static float DurationScale { get; set; } = 1f;
+
+        public static float ScaleFor(string? level) => level switch { "calm" => 0.5f, "off" => 0f, _ => 1f };
+
         public static readonly Ease Out = new Ease(.2, .8, .2, 1);
         public static readonly Ease Spring = new Ease(.34, 1.56, .64, 1);
         public static readonly Ease SpringSoft = new Ease(.34, 1.35, .64, 1);
@@ -101,7 +106,9 @@ namespace LiteMonitor
 
         public void Set(float target, float durMs, Ease ease, float delayMs = 0)
         {
-            if (Math.Abs(target - _to) < 1e-4f && _dur > 0) return;
+            durMs *= Motion.DurationScale;
+            delayMs *= Motion.DurationScale;
+            if (Math.Abs(target - _to) < 1e-4f && (_dur > 0 || durMs <= 0)) return;
             long now = Motion.Now;
             _from = Value(now);
             _to = target;

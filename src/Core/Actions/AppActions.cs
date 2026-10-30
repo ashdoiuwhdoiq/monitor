@@ -163,9 +163,12 @@ namespace LiteMonitor.src.Core.Actions
         /// 切换界面模式（菜单、系统明暗变化时调用）：更新色板与菜单，Graphite 面板以圆形揭开切换到新主题。
         /// origin 为揭开的圆心（面板客户区坐标），null 表示面板中心。
         /// </summary>
-        public static void ApplyUIMode(Settings cfg, UIController? ui, MainForm form, Point? origin)
+        public static void ApplyUIMode(Settings cfg, UIController? ui, MainForm form, Point? origin, bool notifyWindows = true)
         {
+            // 让打开着的窗口先存下旧画面，稍后以圆形揭开过渡到新配色
+            if (notifyWindows) LiteMonitor.src.UI.Graphite.UIModeHub.RaiseBefore(null, null);
             LiteMonitor.src.UI.Controls.UIColors.Apply(cfg.UIThemeMode);
+            if (notifyWindows) LiteMonitor.src.UI.Graphite.UIModeHub.RaiseChanged();
             LiteMonitor.src.UI.Controls.GraphiteMenuRenderer.Install();
             if (SyncGraphiteSkin(cfg))
             {

@@ -329,7 +329,7 @@ namespace LiteMonitor.src.UI.Helpers
         public void OpenTrafficHistory()
         {
             foreach (Form f in Application.OpenForms) { if (f is TrafficHistoryForm) { f.Activate(); return; } }
-            new TrafficHistoryForm(_cfg).Show();
+            new LiteMonitor.src.UI.Graphite.TrafficWindow(_cfg).Show();
         }
 
         public async void CleanMemory()

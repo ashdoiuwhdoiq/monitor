@@ -89,6 +89,10 @@ namespace LiteMonitor
             ThemeManager.Load(name);
             var t = ThemeManager.Current;
 
+            // 设置里的面板强调色与动效强度
+            if (!string.IsNullOrWhiteSpace(_cfg.PanelAccent)) t.Color.BarLow = _cfg.PanelAccent;
+            Motion.DurationScale = Motion.ScaleFor(_cfg.MotionLevel);
+
             // 4. 安全释放旧主题的字体
             // 此时 Current 已经是新主题了，Paint 事件只会用新字体，所以释放旧的是安全的
             if (oldTheme != null && oldTheme != t)

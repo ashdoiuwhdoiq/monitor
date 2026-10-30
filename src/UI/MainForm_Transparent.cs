@@ -233,6 +233,14 @@ namespace LiteMonitor
             };
             Move += (_, __) => { if (_dragMoved) _detailCard?.HideCard(); };
 
+            // 各窗口里的明暗按钮统一走这里切换整个程序的界面模式
+            src.UI.Graphite.UIModeHub.Apply = mode =>
+            {
+                _cfg.UIThemeMode = mode;
+                _cfg.Save();
+                src.Core.Actions.AppActions.ApplyUIMode(_cfg, _ui, this, null, notifyWindows: false);
+            };
+
             // 界面模式为「跟随系统」时，Windows 切换深浅色后面板以圆形揭开跟着切换
             Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
             FormClosed += (_, __) => Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;

@@ -257,7 +257,7 @@ namespace LiteMonitor.src.UI.Helpers
                     break;
                 case 3: 
                     foreach (Form f in Application.OpenForms) { if (f is TrafficHistoryForm) { f.Activate(); return; } }
-                    new TrafficHistoryForm(_cfg).Show(); 
+                    new LiteMonitor.src.UI.Graphite.TrafficWindow(_cfg).Show(); 
                     break;
                 case 4: 
                     try { using (var form = new CleanMemoryForm()) await form.StartCleaningAsync(); } catch { } 
