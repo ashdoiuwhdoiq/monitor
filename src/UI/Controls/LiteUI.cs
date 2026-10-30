@@ -793,7 +793,7 @@ namespace LiteMonitor.src.UI.Controls
     /// </summary>
     public class NavRail : FlowLayoutPanel
     {
-        private readonly System.Windows.Forms.Timer _timer = new System.Windows.Forms.Timer { Interval = 15 };
+        private readonly FrameTimer _timer = new FrameTimer { Interval = 0 }; // 跟随显示器刷新率
         private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
         private long _last;
         private float _y = float.NaN, _targetY;

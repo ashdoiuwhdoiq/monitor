@@ -21,7 +21,7 @@ namespace LiteMonitor.src.UI.Helpers
         private const int GROUP_GAP = 5;     // 组间距
 
         // 出现时的淡入（不抢焦点、不影响定位逻辑）
-        private readonly System.Windows.Forms.Timer _fadeTimer = new System.Windows.Forms.Timer { Interval = 15 };
+        private readonly FrameTimer _fadeTimer = new FrameTimer { Interval = 0 }; // 跟随显示器刷新率
         private readonly System.Diagnostics.Stopwatch _fadeClock = new System.Diagnostics.Stopwatch();
         private const int FadeMs = 160;
         private double _targetOpacity = 1.0;

@@ -100,7 +100,7 @@ namespace LiteMonitor.src.UI.Graphite
         protected override int Draw(Graphics g)
         {
             var tk = Tk;
-            using (var bg = new SolidBrush(tk.Win)) g.FillRectangle(bg, ClientRectangle);
+            g.Clear(tk.Win); // 整窗底色：Clear 比抗锯齿填充快得多
             int x0 = S(36), y0 = S(28), cw = ClientSize.Width - S(72);
 
             // ===== 标题行 =====

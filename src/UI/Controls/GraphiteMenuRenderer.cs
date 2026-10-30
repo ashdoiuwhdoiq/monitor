@@ -28,13 +28,13 @@ namespace LiteMonitor.src.UI.Controls
         private const float FadeMs = 160, ItemMs = 320, ItemStaggerMs = 25, SlidePx = 6;
         private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ToolStripDropDown, OpenState> _open = new();
         private static readonly System.Collections.Generic.List<ToolStripDropDown> _animating = new();
-        private static readonly System.Windows.Forms.Timer _animTimer = CreateTimer();
+        private static readonly FrameTimer _animTimer = CreateTimer(); // 跟随显示器刷新率
 
         private sealed class OpenState { public long Start; public Point Target; }
 
-        private static System.Windows.Forms.Timer CreateTimer()
+        private static FrameTimer CreateTimer()
         {
-            var t = new System.Windows.Forms.Timer { Interval = 15 };
+            var t = new FrameTimer { Interval = 0 };
             t.Tick += (_, __) =>
             {
                 long now = LiteMonitor.Motion.Now;

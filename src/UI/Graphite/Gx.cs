@@ -91,7 +91,7 @@ namespace LiteMonitor.src.UI.Graphite
 
         private readonly List<HitArea> _hits = new();
         private readonly Dictionary<string, Tween> _anims = new();
-        private readonly System.Windows.Forms.Timer _timer = new() { Interval = 15 };
+        private readonly FrameTimer _timer = new() { Interval = 0 }; // 跟随显示器刷新率
         private HitArea? _captured;
         private bool _wantFrames;
 
@@ -107,8 +107,10 @@ namespace LiteMonitor.src.UI.Graphite
 
         protected GCanvas()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
-            _timer.Tick += (_, __) => Invalidate();
+            // 不用 OptimizedDoubleBuffer：它的共享缓冲上限很小，整窗大小的缓冲每帧都要新建再释放。
+            // 改用自己的缓冲上下文，缓冲区按窗口大小分配一次后反复复用。
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable | ControlStyles.Opaque, true);
+            _timer.Tick += (_, __) => { Invalidate(); Update(); }; // 在本次垂直同步内画完，不拖到下一帧
         }
 
         /// <summary>按设计稿 px 缩放到当前 DPI。</summary>
@@ -118,9 +120,17 @@ namespace LiteMonitor.src.UI.Graphite
         /// <summary>绘制内容；返回内容总高度（用于滚动）。坐标为内容坐标（已扣除滚动）。</summary>
         protected abstract int Draw(Graphics g);
 
+        private static readonly BufferedGraphicsContext _bufCtx = new() { MaximumBuffer = new Size(4096, 4096) };
+
         protected override void OnPaint(PaintEventArgs e)
         {
-            var g = e.Graphics;
+            using var buffer = _bufCtx.Allocate(e.Graphics, ClientRectangle);
+            PaintFrame(buffer.Graphics);
+            buffer.Render(e.Graphics);
+        }
+
+        private void PaintFrame(Graphics g)
+        {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;

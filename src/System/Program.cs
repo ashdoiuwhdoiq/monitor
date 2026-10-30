@@ -86,6 +86,9 @@ namespace LiteMonitor
             {
                 // ★★★ 3. 启动应用 ★★★
                 ApplicationConfiguration.Initialize();
+                // 双缓冲的共享缓冲默认上限很小，超过就每次重绘都新建再释放一整张缓冲；放大上限让各窗口复用同一块，
+                // 动画帧（跟随显示器刷新率）才画得过来
+                global::System.Drawing.BufferedGraphicsManager.Current.MaximumBuffer = new global::System.Drawing.Size(4096, 4096);
                 if (!DriverInstaller.CheckPawnIOBeforeHardware(Settings.Load()))
                 {
                     return;

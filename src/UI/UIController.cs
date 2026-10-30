@@ -17,7 +17,7 @@ namespace LiteMonitor
         private readonly System.Windows.Forms.Timer _timer;
 
         // 动画时钟：只在有数值、颜色、悬停或折叠在变化时运行，静止时自动停下
-        private readonly System.Windows.Forms.Timer _animTimer;
+        private readonly FrameTimer _animTimer; // 跟随显示器刷新率
         private readonly System.Diagnostics.Stopwatch _animClock = System.Diagnostics.Stopwatch.StartNew();
         private long _lastFrameMs;
         private MetricItem? _hoverItem;
@@ -61,7 +61,7 @@ namespace LiteMonitor
             _timer.Tick += (_, __) => Tick();
             _timer.Start();
 
-            _animTimer = new System.Windows.Forms.Timer { Interval = 15 };
+            _animTimer = new FrameTimer { Interval = 0 };
             _animTimer.Tick += (_, __) => AnimFrame();
 
             ApplyTheme(_cfg.Skin);

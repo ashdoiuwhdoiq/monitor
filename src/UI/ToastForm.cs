@@ -15,7 +15,7 @@ namespace LiteMonitor
     {
         private const float HoldMs = 1700, InMs = 500, FadeInMs = 250, OutMs = 220, RisePx = 20;
 
-        private readonly System.Windows.Forms.Timer _timer = new System.Windows.Forms.Timer { Interval = 15 };
+        private readonly FrameTimer _timer = new FrameTimer { Interval = 0 }; // 跟随显示器刷新率
         private string _text = "";
         private long _shownAt;
         private Point _anchor;

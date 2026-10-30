@@ -63,7 +63,7 @@ namespace LiteMonitor.src.UI.Graphite
         protected override int Draw(Graphics g)
         {
             var tk = Tk;
-            using (var bg = new SolidBrush(tk.Win)) g.FillRectangle(bg, ClientRectangle);
+            g.Clear(tk.Win); // 整窗底色：Clear 比抗锯齿填充快得多
             _section = 0;
             float page = AFrom("page." + _showKey, 0, 1, 550, Motion.Out);
             float fade = AFrom("pagefade." + _showKey, 0, 1, 300, Motion.Out);
@@ -575,7 +575,7 @@ namespace LiteMonitor.src.UI.Graphite
         protected override int Draw(Graphics g)
         {
             var tk = Tk;
-            using (var bg = new SolidBrush(tk.Side)) g.FillRectangle(bg, ClientRectangle);
+            g.Clear(tk.Side); // 整窗底色：Clear 比抗锯齿填充快得多
             using (var pen = new Pen(tk.Line2)) g.DrawLine(pen, 0, 0, 0, Height);
             int x = S(28), w = Width - S(56);
             GxDraw.Text(g, "实时预览", Gx.F(11), new Rectangle(x, S(24), S(120), S(32)), tk.Faint);
@@ -684,7 +684,7 @@ namespace LiteMonitor.src.UI.Graphite
         protected override int Draw(Graphics g)
         {
             var tk = Tk;
-            using (var bg = new SolidBrush(tk.Side)) g.FillRectangle(bg, ClientRectangle);
+            g.Clear(tk.Side); // 整窗底色：Clear 比抗锯齿填充快得多
             using (var pen = new Pen(tk.Line2)) g.DrawLine(pen, Width - 1, 0, Width - 1, Height);
 
             // 品牌

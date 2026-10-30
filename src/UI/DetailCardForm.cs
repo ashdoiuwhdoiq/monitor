@@ -15,7 +15,7 @@ namespace LiteMonitor.src.UI
     {
         private const int SlideOffset = 28;
 
-        private readonly System.Windows.Forms.Timer _timer = new System.Windows.Forms.Timer { Interval = 15 };
+        private readonly FrameTimer _timer = new FrameTimer { Interval = 0 }; // 跟随显示器刷新率
 
         private MetricItem? _item;
         private string _group = "";
@@ -95,7 +95,7 @@ namespace LiteMonitor.src.UI
 
         private void Start()
         {
-            _timer.Interval = 15;
+            _timer.Interval = 0;
             if (!_timer.Enabled) _timer.Start();
         }
 
@@ -114,7 +114,7 @@ namespace LiteMonitor.src.UI
 
             // 动效结束后降到每秒 4 次刷新即可跟上数据变化
             bool settled = !_slide.IsRunning(now) && !_fade.IsRunning(now) && !_y.IsRunning(now);
-            _timer.Interval = settled ? 250 : 15;
+            _timer.Interval = settled ? 250 : 0;
         }
 
         private void ApplyPosition()

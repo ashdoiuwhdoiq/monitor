@@ -40,7 +40,7 @@ namespace LiteMonitor.src.UI
         private Dictionary<string, string> _baseline = new();
         private string _baselineFull = "";
         private readonly System.Windows.Forms.Timer _dirtyTimer = new() { Interval = 300 };
-        private readonly System.Windows.Forms.Timer _barTimer = new() { Interval = 15 };
+        private readonly FrameTimer _barTimer = new() { Interval = 0 }; // 跟随显示器刷新率
         private readonly Tween _barY = new Tween(0);
         private long _flashUntil;
 
